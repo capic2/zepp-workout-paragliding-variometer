@@ -1,0 +1,1 @@
+# zepp-workout-paragliding-variometer
