@@ -1,0 +1,365 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 24417,
+    "appName": "ParaVario",
+    "appType": "app",
+    "extType": "workout",
+    "version": {
+      "code": 1,
+      "name": "1.0.0"
+    },
+    "icon": "icon.png",
+    "vender": "Vincent Capicotto",
+    "description": "Variomètre pour parapente"
+  },
+  "permissions": ["data:user.hd.workout"],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "3.6",
+      "target": "3.6",
+      "minVersion": "3.6"
+    }
+  },
+  "targets": {
+    "common": {
+      "module": {
+        "data-widget": {
+          "widgets": [
+            {
+              "path": "data-widget/common/index",
+              "name": "Variomètre",
+              "icon": "icon.png",
+              "window": {
+                "isPinned": 1
+              },
+              "runtime": {
+                "ability": [
+                  {
+                    "type": 1,
+                    "subType": []
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "platforms": [
+        {
+          "st": "r"
+        }
+      ],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "ar-EG": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ca-ES": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "cs-CZ": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "da-DK": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "de-DE": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "el-GR": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "en-US": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "es-ES": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "fi-FI": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "fr-FR": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "iw-IL": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "hi-IN": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "hu-HU": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "id-ID": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "it-IT": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ja-JP": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ko-KR": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ms-MY": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "nb-NO": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "nl-NL": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "pl-PL": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "pt-PT": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "pt-BR": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ro-RO": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "ru-RU": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "sk-SK": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "sr-RS": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "sv-SE": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "th-TH": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "tr-TR": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "uk-UA": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "vi-VN": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "Paragliding"
+          }
+        ]
+      }
+    },
+    "zh-CN": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "跑步配速大师"
+          }
+        ]
+      }
+    },
+    "zh-TW": {
+      "data-widget": {
+        "widgets": [
+          {
+            "name": "跑步配速大師"
+          }
+        ]
+      }
+    }
+  },
+  "defaultLanguage": "en-US"
+}
