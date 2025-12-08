@@ -15,11 +15,14 @@ import {
   pausePalmScreenOff,
   setWakeUpRelaunch,
 } from "@zos/display";
+import { log } from "@zos/utils";
 
 DataWidget({
   state: {
+    logger: null,
     animationInterval: null,
     monitoringInterval: null,
+    monitoringActive: false,
     isActive: false,
     isSimulation: false,
     player: null,
@@ -32,16 +35,13 @@ DataWidget({
     rightBar: null,
     chevrons: [],
     modeIndicator: null,
-
     verticalSpeedWidget: null,
   },
 
   config: {
-    // Marge d'erreur pour la vitesse verticale (évite de déclencher les sons et les vibrations à la moindre variation)
     deadband: 0.2,
     animationInterval: 100,
 
-    // Seuils unifiés pour vibrations et affichage
     thresholds: {
       climbWeak: 0.2,
       climbMedium: 1.0,
@@ -51,19 +51,13 @@ DataWidget({
       sinkStrong: -2.0,
     },
 
-    // Configuration des vibrations
     vibration: {
       enabled: true,
       patterns: {
-        // Montée faible : vibration courte unique
         climbWeak: { duration: 100, interval: 2000 },
-        // Montée moyenne : double vibration
         climbMedium: { duration: 100, count: 2, gap: 100, interval: 1500 },
-        // Montée forte : triple vibration rapide
         climbStrong: { duration: 100, count: 3, gap: 80, interval: 1000 },
-        // Montée exceptionnelle : vibration continue
         climbExceptional: { duration: 200, count: 4, gap: 50, interval: 800 },
-        // Descente : vibration longue unique
         sink: { duration: 300, interval: 3000 },
         sinkStrong: { duration: 400, count: 2, gap: 200, interval: 2000 },
       },
@@ -90,16 +84,24 @@ DataWidget({
     ],
   },
 
+  onInit()  {
+    this.state.logger = log.getLogger("ParaVario");
+    this.state.logger.log("=== LIFECYCLE: onInit ===");
+  },
+
   build() {
-    console.log("=== ParaVario Build START (480x480) ===");
+    if (!this.state.logger) {
+      this.state.logger = log.getLogger("ParaVario");
+    }
+    this.state.logger.log("=== LIFECYCLE: build START ===");
 
     try {
       pauseDropWristScreenOff({ duration: 0 });
       pausePalmScreenOff({ duration: 0 });
       setWakeUpRelaunch({ relaunch: true });
-      console.log("✓✓✓ Screen will stay ON ✓✓✓");
+      this.state.logger.log("[build] Screen will stay ON");
     } catch (error) {
-      console.log("Screen management error:", error);
+      this.state.logger.error("[build] Screen error:", error);
     }
 
     createWidget(widget.FILL_RECT, {
@@ -110,7 +112,6 @@ DataWidget({
       color: this.config.colors.neutral,
     });
 
-    // === BARRE LATÉRALE GAUCHE ===
     this.state.leftBar = createWidget(widget.FILL_RECT, {
       x: 0,
       y: 0,
@@ -120,7 +121,6 @@ DataWidget({
       color: 0x333333,
     });
 
-    // === BARRE LATÉRALE DROITE ===
     this.state.rightBar = createWidget(widget.FILL_RECT, {
       x: 420,
       y: 0,
@@ -129,27 +129,20 @@ DataWidget({
       color: 0x333333,
     });
 
-    // === CHEVRONS ===
     this.state.chevrons = [];
     for (let i = 0; i < 3; i++) {
       this.state.chevrons.push(
-        createWidget(widget.TEXT, {
-          x: 0,
-          y: 95 + i * 20,
-          w: 480,
-          h: 22,
-          color: 0x666666,
-          text_size: 28,
-          align_h: align.CENTER_H,
-          align_v: align.CENTER_V,
-          text_style: text_style.NONE,
-          text: "-",
+        createWidget(widget.IMG, {
+          x: 220,
+          y: 90 + i * 25,
+          w: 40,
+          h: 40,
+          src: "chevron_neutral.png",
           alpha: 100,
         }),
       );
     }
 
-    // === VITESSE VERTICALE CENTRALE ===
     this.state.verticalSpeedWidget = createWidget(widget.SPORT_DATA, {
       edit_id: 100,
       category: edit_widget_group_type.SPORTS,
@@ -179,7 +172,6 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    // === ALTITUDE ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 1,
       category: edit_widget_group_type.SPORTS,
@@ -209,7 +201,6 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    // === VITESSE SOL ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 2,
       category: edit_widget_group_type.SPORTS,
@@ -239,7 +230,6 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    // === DISTANCE ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 3,
       category: edit_widget_group_type.SPORTS,
@@ -269,7 +259,6 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    // === INDICATEUR MODE ===
     this.state.modeIndicator = createWidget(widget.TEXT, {
       x: 0,
       y: 450,
@@ -285,13 +274,14 @@ DataWidget({
     this.initAudioPlayer();
     this.initVibrator();
 
-    console.log("=== ParaVario Build END ===");
+    this.state.logger.log("=== LIFECYCLE: build END ===");
 
     this.detectAndStart();
   },
 
   initAudioPlayer() {
     try {
+      this.state.logger.log("[initAudioPlayer] Start");
       this.state.player = new SoundPlayer();
       this.state.player.set.volume(100);
 
@@ -309,39 +299,43 @@ DataWidget({
       });
 
       this.state.player.onFail((info) => {
-        console.log(`Audio failed: \${info.name}`);
+        this.state.logger.error(`[initAudioPlayer] Failed: ${info.name}`);
       });
 
-      console.log("Audio player initialized");
+      this.state.logger.log("[initAudioPlayer] OK");
     } catch (error) {
-      console.log("Audio player init failed:", error);
+      this.state.logger.error("[initAudioPlayer] Error:", error);
     }
   },
 
   initVibrator() {
     try {
+      this.state.logger.log("[initVibrator] Start");
       this.state.vibrator = new Vibrator();
-      console.log("Vibrator initialized");
+      this.state.logger.log("[initVibrator] OK");
     } catch (error) {
-      console.log("Vibrator init failed:", error);
+      this.state.logger.error("[initVibrator] Error:", error);
     }
   },
 
   detectAndStart() {
     this.state.isActive = true;
-    console.log("=== Detecting mode ===");
+    this.state.monitoringActive = true;
+    this.state.logger.log("[detectAndStart] === START ===");
 
     const testResult = getSportData(
-      { type: "speed_vertical" },
+      { type: "vertical_speed" },
       (callbackResult) => {
-        console.log("getSportData callback received:", callbackResult);
+        this.state.logger.log(
+          `[detectAndStart] Callback: code=${callbackResult.code}`,
+        );
       },
     );
 
-    console.log("getSportData returned:", testResult);
+    this.state.logger.log(`[detectAndStart] Result: ${testResult}`);
 
     if (testResult === true) {
-      console.log("✓✓✓ REAL DATA MODE ✓✓✓");
+      this.state.logger.log("[detectAndStart] REAL DATA MODE");
       this.state.isSimulation = false;
 
       if (this.state.modeIndicator) {
@@ -351,7 +345,7 @@ DataWidget({
         });
       }
     } else {
-      console.log("✗✗✗ SIMULATION MODE ✗✗✗");
+      this.state.logger.log("[detectAndStart] SIMULATION MODE");
       this.state.isSimulation = true;
 
       if (this.state.modeIndicator) {
@@ -364,55 +358,113 @@ DataWidget({
 
     this.startAnimation();
     this.startMonitoring();
+
+    this.state.logger.log("[detectAndStart] === END ===");
   },
 
   startMonitoring() {
-    console.log(">>> Starting monitoring");
+    this.state.logger.log("[startMonitoring] START");
+
     if (this.state.monitoringInterval) {
-      console.log("Monitoring already started");
+      this.state.logger.log("[startMonitoring] Already running");
       return;
     }
 
-    this.state.monitoringInterval = setInterval(() => {
-      if (!this.state.isActive) return;
+    this.state.monitoringActive = true;
+    this.monitoringLoop();
 
-      if (this.state.isSimulation) {
-        const mockVSpeed = (Math.random() - 0.5) * 8;
-        console.log(
-          `Simulation mode - generating random VSpeed: ${mockVSpeed}`,
-        );
-        this.updateFeedback(mockVSpeed);
-      } else {
-        this.fetchRealData();
-      }
-    }, 500);
+    this.state.logger.log("[startMonitoring] Loop started");
+  },
+
+  monitoringLoop() {
+    if (!this.state.monitoringActive || !this.state.isActive) {
+      this.state.logger.log(
+        `[monitoringLoop] STOP (active=${this.state.monitoringActive})`,
+      );
+      return;
+    }
+
+    this.state.logger.log("[monitoringLoop] TICK");
+
+    if (this.state.isSimulation) {
+      const mockVSpeed = (Math.random() - 0.5) * 8;
+      this.state.logger.log(`[monitoringLoop] SIM: ${mockVSpeed.toFixed(2)}`);
+      this.updateFeedback(mockVSpeed);
+    } else {
+      this.fetchRealData();
+    }
+
+    this.state.monitoringInterval = setTimeout(() => {
+      this.monitoringLoop();
+    }, 1000);
+  },
+
+  stopMonitoring() {
+    this.state.logger.log("[stopMonitoring] STOP");
+    this.state.monitoringActive = false;
+
+    if (this.state.monitoringInterval) {
+      clearTimeout(this.state.monitoringInterval);
+      this.state.monitoringInterval = null;
+    }
   },
 
   fetchRealData() {
-    console.log(">>> Fetching real data");
-    const result = getSportData(
-      { type: "vertical_speed" },
-      (callbackResult) => {
-        const { code, data } = callbackResult;
+    this.state.logger.log("[fetchRealData] Fetching...");
 
-        if (code === 0) {
-          try {
-            const [{ vertical_speed }] = JSON.parse(data);
-            if (vertical_speed !== undefined) {
-              const vSpeed = parseFloat(vertical_speed);
-              console.log("Real VSpeed:", vSpeed);
-              this.updateFeedback(vSpeed);
-            }
-          } catch (error) {
-            console.log("Parse error:", error);
+    getSportData({ type: "vertical_speed" }, (callbackResult) => {
+      const { code, data } = callbackResult;
+
+      if (code === 0) {
+        try {
+          const [{ vertical_speed }] = JSON.parse(data);
+          this.state.logger.log(`[fetchRealData] Raw data: ${data}`);
+
+          if (vertical_speed !== undefined) {
+            const rawValue = parseFloat(vertical_speed);
+
+            // LOGS DÉTAILLÉS
+            this.state.logger.log(`[fetchRealData] Raw value: ${rawValue}`);
+            this.state.logger.log(`[fetchRealData] Type: ${typeof rawValue}`);
+            this.state.logger.log(
+              `[fetchRealData] Is negative? ${rawValue < 0}`,
+            );
+
+            // Test plusieurs conversions
+            const vSpeed1 = rawValue / 100; // Standard
+            const vSpeed2 = (rawValue - 32768) / 100; // Si unsigned 16-bit
+            const vSpeed3 =
+              rawValue > 32768 ? (rawValue - 65536) / 100 : rawValue / 100; // Si unsigned
+
+            this.state.logger.log(
+              `[fetchRealData] ÷100: ${vSpeed1.toFixed(2)}`,
+            );
+            this.state.logger.log(
+              `[fetchRealData] -32768÷100: ${vSpeed2.toFixed(2)}`,
+            );
+            this.state.logger.log(
+              `[fetchRealData] Unsigned: ${vSpeed3.toFixed(2)}`,
+            );
+
+            // Utiliser la conversion appropriée (à ajuster selon les logs)
+            const vSpeed = vSpeed1;
+
+            this.state.logger.log(
+              `[fetchRealData] Final: ${vSpeed.toFixed(2)} m/s`,
+            );
+            this.updateFeedback(vSpeed);
           }
+        } catch (error) {
+          this.state.logger.error(`[fetchRealData] Error: ${error}`);
         }
-      },
-    );
-    console.log("fetchRealData result:", result);
+      } else {
+        this.state.logger.error(`[fetchRealData] Code: ${code}`);
+      }
+    });
   },
 
   updateFeedback(vSpeed) {
+    this.state.logger.log(`[updateFeedback] ${vSpeed.toFixed(2)} m/s`);
     this.state.lastVerticalSpeed = vSpeed;
     this.updateChevrons(vSpeed);
     this.handleVibration(vSpeed);
@@ -420,7 +472,10 @@ DataWidget({
   },
 
   updateChevrons(vSpeed) {
-    if (!this.state.chevrons) return;
+    if (!this.state.chevrons) {
+      this.state.logger.error("[updateChevrons] No chevrons");
+      return;
+    }
 
     if (vSpeed > this.config.deadband) {
       const intensity = Math.min(Math.abs(vSpeed) / 3.0, 1.0);
@@ -428,8 +483,7 @@ DataWidget({
 
       this.state.chevrons.forEach((chevron, i) => {
         chevron.setProperty(prop.MORE, {
-          text: "^",
-          color: 0x00ff00,
+          src: "chevron_up.png",
           alpha: i < numChevrons ? 255 : 50,
         });
       });
@@ -439,165 +493,29 @@ DataWidget({
 
       this.state.chevrons.forEach((chevron, i) => {
         chevron.setProperty(prop.MORE, {
-          text: "v",
-          color: 0xff0000,
-          alpha: 2 - i < numChevrons ? 255 : 50,
+          src: "chevron_down.png",
+          alpha: 2 - i < numChevrons ? 255 : 50, // ← CORRIGÉ : parenthèses ajoutées
         });
       });
     } else {
       this.state.chevrons.forEach((chevron) => {
         chevron.setProperty(prop.MORE, {
-          text: "-",
-          color: 0x666666,
+          src: "chevron_neutral.png",
           alpha: 100,
         });
       });
     }
   },
 
-  onInit() {
-    console.log("ParaVario onInit");
-  },
-
-  onResume() {
-    console.log("ParaVario onResume");
-    this.state.isActive = true;
-
-    try {
-      pauseDropWristScreenOff({ duration: 0 });
-      pausePalmScreenOff({ duration: 0 });
-    } catch (error) {
-      console.log("Screen management resume error:", error);
-    }
-  },
-
-  onPause() {
-    console.log("ParaVario onPause");
-    this.state.isActive = false;
-    this.stopAnimation();
-
-    if (this.state.monitoringInterval) {
-      clearInterval(this.state.monitoringInterval);
-      this.state.monitoringInterval = null;
-    }
-  },
-
-  onDestroy() {
-    console.log("ParaVario onDestroy");
-    this.state.isActive = false;
-    this.stopAnimation();
-
-    if (this.state.monitoringInterval) {
-      clearInterval(this.state.monitoringInterval);
-      this.state.monitoringInterval = null;
-    }
-
-    if (this.state.player) {
-      this.state.player.destroy();
-    }
-
-    if (this.state.vibrator) {
-      this.state.vibrator.stop();
-    }
-
-    try {
-      pauseDropWristScreenOff({ duration: 1 });
-      pausePalmScreenOff({ duration: 1 });
-    } catch (error) {
-      console.log("Screen management destroy error:", error);
-    }
-  },
-
-  startAnimation() {
-    if (this.state.animationInterval) return;
-
-    console.log(">>> Starting animations");
-
-    this.state.animationInterval = setInterval(() => {
-      if (this.state.isActive) {
-        this.state.animationPhase = (this.state.animationPhase + 1) % 10;
-        this.updateAnimations();
-      }
-    }, this.config.animationInterval);
-  },
-
-  stopAnimation() {
-    if (this.state.animationInterval) {
-      clearInterval(this.state.animationInterval);
-      this.state.animationInterval = null;
-    }
-  },
-
-  handleVibration(vSpeed) {
-    if (!this.config.vibration.enabled || !this.state.vibrator) return;
-
-    const now = Date.now();
-    const vib = this.config.vibration;
-    const thresh = this.config.thresholds;
-    let pattern = null;
-    let shouldVibrate = false;
-
-    if (vSpeed >= thresh.climbExceptional) {
-      pattern = vib.patterns.climbExceptional;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    } else if (vSpeed >= thresh.climbStrong) {
-      pattern = vib.patterns.climbStrong;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    } else if (vSpeed >= thresh.climbMedium) {
-      pattern = vib.patterns.climbMedium;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    } else if (vSpeed >= thresh.climbWeak) {
-      pattern = vib.patterns.climbWeak;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    } else if (vSpeed <= thresh.sinkStrong) {
-      pattern = vib.patterns.sinkStrong;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    } else if (vSpeed <= thresh.sink) {
-      pattern = vib.patterns.sink;
-      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
-    }
-
-    if (shouldVibrate && pattern) {
-      this.state.lastVibrationTime = now;
-      this.executeVibrationPattern(pattern);
-    }
-  },
-
-  executeVibrationPattern(pattern) {
-    if (!this.state.vibrator) return;
-
-    const count = pattern.count || 1;
-    const duration = pattern.duration;
-    const gap = pattern.gap || 0;
-
-    this.state.vibrator.start();
-    setTimeout(() => {
-      this.state.vibrator.stop();
-    }, duration);
-
-    if (count > 1) {
-      for (let i = 1; i < count; i++) {
-        setTimeout(
-          () => {
-            this.state.vibrator.start();
-            setTimeout(() => {
-              this.state.vibrator.stop();
-            }, duration);
-          },
-          i * (duration + gap),
-        );
-      }
-    }
-  },
-
   updateAnimations() {
     const vSpeed = this.state.lastVerticalSpeed;
 
+    // Animer les chevrons (images)
     if (this.state.chevrons && Math.abs(vSpeed) > this.config.deadband) {
-      const offset = Math.sin((this.state.animationPhase * Math.PI) / 5) * 5;
+      const offset = Math.sin((this.state.animationPhase * Math.PI) / 5) * 5; // Réduit à 5px
 
       this.state.chevrons.forEach((chevron, i) => {
-        let baseY = 95 + i * 20;
+        let baseY = 90 + i * 25; // ← Ajusté à 60px d'espacement
 
         if (vSpeed > this.config.deadband) {
           chevron.setProperty(prop.MORE, { y: baseY - Math.abs(offset) });
@@ -607,6 +525,7 @@ DataWidget({
       });
     }
 
+    // Animer les barres latérales (AJOUTÉ)
     if (this.state.leftBar && this.state.rightBar) {
       let barColor = 0x333333;
       let barHeight = 480;
@@ -642,8 +561,161 @@ DataWidget({
     }
   },
 
+  onResume() {
+    this.state.logger.log("=== LIFECYCLE: onResume ===");
+    this.state.isActive = true;
+
+    if (this.state.monitoringActive && !this.state.monitoringInterval) {
+      this.state.logger.log("[onResume] Restarting monitoring");
+      this.monitoringLoop();
+    }
+
+    if (!this.state.animationInterval) {
+      this.state.logger.log("[onResume] Restarting animations");
+      this.startAnimation();
+    }
+
+    try {
+      pauseDropWristScreenOff({ duration: 0 });
+      pausePalmScreenOff({ duration: 0 });
+    } catch (error) {
+      this.state.logger.error("[onResume] Error:", error);
+    }
+  },
+
+  onPause() {
+    this.state.logger.log("=== LIFECYCLE: onPause ===");
+
+    if (this.state.monitoringInterval) {
+      this.state.logger.log("[onPause] Clearing monitoring");
+      clearTimeout(this.state.monitoringInterval);
+      this.state.monitoringInterval = null;
+    }
+
+    if (this.state.animationInterval) {
+      this.state.logger.log("[onPause] Clearing animations");
+      clearInterval(this.state.animationInterval);
+      this.state.animationInterval = null;
+    }
+  },
+
+  onDestroy() {
+    this.state.logger.log("=== LIFECYCLE: onDestroy ===");
+    this.state.isActive = false;
+    this.state.monitoringActive = false;
+
+    this.stopMonitoring();
+    this.stopAnimation();
+
+    if (this.state.player) {
+      this.state.player.destroy();
+    }
+
+    if (this.state.vibrator) {
+      this.state.vibrator.stop();
+    }
+
+    try {
+      pauseDropWristScreenOff({ duration: 1 });
+      pausePalmScreenOff({ duration: 1 });
+    } catch (error) {
+      this.state.logger.error("[onDestroy] Error:", error);
+    }
+  },
+
+  startAnimation() {
+    if (this.state.animationInterval) {
+      return;
+    }
+
+    this.state.logger.log("[startAnimation] Starting");
+
+    this.state.animationInterval = setInterval(() => {
+      if (this.state.isActive) {
+        this.state.animationPhase = (this.state.animationPhase + 1) % 10;
+        this.updateAnimations();
+      }
+    }, this.config.animationInterval);
+  },
+
+  stopAnimation() {
+    if (this.state.animationInterval) {
+      clearInterval(this.state.animationInterval);
+      this.state.animationInterval = null;
+      this.state.logger.log("[stopAnimation] Stopped");
+    }
+  },
+
+  handleVibration(vSpeed) {
+    if (!this.config.vibration.enabled || !this.state.vibrator) {
+      return;
+    }
+
+    const now = Date.now();
+    const vib = this.config.vibration;
+    const thresh = this.config.thresholds;
+    let pattern = null;
+    let shouldVibrate = false;
+
+    if (vSpeed >= thresh.climbExceptional) {
+      pattern = vib.patterns.climbExceptional;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    } else if (vSpeed >= thresh.climbStrong) {
+      pattern = vib.patterns.climbStrong;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    } else if (vSpeed >= thresh.climbMedium) {
+      pattern = vib.patterns.climbMedium;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    } else if (vSpeed >= thresh.climbWeak) {
+      pattern = vib.patterns.climbWeak;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    } else if (vSpeed <= thresh.sinkStrong) {
+      pattern = vib.patterns.sinkStrong;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    } else if (vSpeed <= thresh.sink) {
+      pattern = vib.patterns.sink;
+      shouldVibrate = now - this.state.lastVibrationTime >= pattern.interval;
+    }
+
+    if (shouldVibrate && pattern) {
+      this.state.lastVibrationTime = now;
+      this.executeVibrationPattern(pattern);
+    }
+  },
+
+  executeVibrationPattern(pattern) {
+    if (!this.state.vibrator) {
+      return;
+    }
+
+    const count = pattern.count || 1;
+    const duration = pattern.duration;
+    const gap = pattern.gap || 0;
+
+    this.state.vibrator.start();
+    setTimeout(() => {
+      this.state.vibrator.stop();
+    }, duration);
+
+    if (count > 1) {
+      for (let i = 1; i < count; i++) {
+        setTimeout(
+          () => {
+            this.state.vibrator.start();
+            setTimeout(() => {
+              this.state.vibrator.stop();
+            }, duration);
+          },
+          i * (duration + gap),
+        );
+      }
+    }
+  },
+
   playVariometerSound(vSpeed) {
-    if (!this.state.player) return;
+    if (!this.state.player) {
+      return;
+    }
 
     let soundFile = null;
 
@@ -673,7 +745,8 @@ DataWidget({
 
     if (soundFile && soundFile !== this.state.currentSound) {
       this.state.currentSound = soundFile;
-      this.state.player.changeFile(`raw/sounds/${soundFile}`);
+      this.state.logger.log(`[playVariometerSound] ${soundFile}`);
+      this.state.player.changeFile(`assets://raw/media/${soundFile}`);
       this.state.player.play();
     }
   },
