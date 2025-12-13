@@ -34,8 +34,15 @@ DataWidget({
     leftBar: null,
     rightBar: null,
     chevrons: [],
-    modeIndicator: null,
-    verticalSpeedWidget: null,
+    vSpeedWidget: null,
+    currentAltitude: 0,
+    thermalHistory: [],
+    currentThermal: null,
+    thermalStartAltitude: null,
+    thermalStartTime: null,
+    inThermal: false,
+    thermalIndicator: null,
+    statsWidget: null,
   },
 
   config: {
@@ -51,6 +58,13 @@ DataWidget({
       sinkStrong: -2.0,
     },
 
+    thermal: {
+      minClimbRate: 0.5,        // m/s minimum pour considérer un thermique
+      minDuration: 10000,       // 10 secondes minimum
+      minAltitudeGain: 20,      // 20m minimum de gain
+      exitClimbRate: 0.2,       // Sortie du thermique si < 0.2 m/s
+    },
+
     vibration: {
       enabled: true,
       patterns: {
@@ -60,6 +74,7 @@ DataWidget({
         climbExceptional: { duration: 200, count: 4, gap: 50, interval: 800 },
         sink: { duration: 300, interval: 3000 },
         sinkStrong: { duration: 400, count: 2, gap: 200, interval: 2000 },
+        thermalEntry: { duration: 200, count: 3, gap: 100, interval: 0 },
       },
     },
 
@@ -84,26 +99,27 @@ DataWidget({
     ],
   },
 
-  onInit()  {
+  onInit() {
     this.state.logger = log.getLogger("ParaVario");
-    this.state.logger.log("=== LIFECYCLE: onInit ===");
+    console.log("=== LIFECYCLE: onInit ===");
   },
 
   build() {
     if (!this.state.logger) {
       this.state.logger = log.getLogger("ParaVario");
     }
-    this.state.logger.log("=== LIFECYCLE: build START ===");
+    console.log("=== LIFECYCLE: build START ===");
 
     try {
       pauseDropWristScreenOff({ duration: 0 });
       pausePalmScreenOff({ duration: 0 });
       setWakeUpRelaunch({ relaunch: true });
-      this.state.logger.log("[build] Screen will stay ON");
+      console.log("[build] Screen will stay ON");
     } catch (error) {
-      this.state.logger.error("[build] Screen error:", error);
+      console.log(`[build] Screen error: ${error}`);
     }
 
+    // Fond
     createWidget(widget.FILL_RECT, {
       x: 0,
       y: 0,
@@ -112,6 +128,7 @@ DataWidget({
       color: this.config.colors.neutral,
     });
 
+    // Barres latérales
     this.state.leftBar = createWidget(widget.FILL_RECT, {
       x: 0,
       y: 0,
@@ -129,63 +146,37 @@ DataWidget({
       color: 0x333333,
     });
 
-    this.state.chevrons = [];
-    for (let i = 0; i < 3; i++) {
-      this.state.chevrons.push(
-        createWidget(widget.IMG, {
-          x: 220,
-          y: 90 + i * 25,
-          w: 40,
-          h: 40,
-          src: "chevron_neutral.png",
-          alpha: 100,
-        }),
-      );
-    }
-
-    this.state.verticalSpeedWidget = createWidget(widget.SPORT_DATA, {
-      edit_id: 100,
-      category: edit_widget_group_type.SPORTS,
-      default_type: sport_data.SPEED_VERTICAL,
-      x: 0,
-      y: 170,
-      w: 480,
-      h: 180,
-      text_size: 130,
-      text_color: 0xffffff,
-      text_x: 0,
-      text_y: 0,
-      text_w: 480,
-      text_h: 150,
-      align_h: align.CENTER_H,
-      rect_visible: false,
+    // === BOUTON STATS (haut gauche) ===
+    createWidget(widget.BUTTON, {
+      x: 10,
+      y: 10,
+      w: 80,
+      h: 40,
+      text: "📊",
+      text_size: 24,
+      radius: 8,
+      normal_color: 0x333333,
+      press_color: 0x555555,
+      click_func: () => {
+        this.showThermalHistory();
+      },
     });
 
-    createWidget(widget.TEXT, {
-      text: "m/s",
-      x: 0,
-      y: 300,
-      w: 480,
-      h: 26,
-      text_size: 20,
-      text_color: 0xcccccc,
-      align_h: align.CENTER_H,
-    });
-
+    // === ALTITUDE (haut centre) ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 1,
       category: edit_widget_group_type.SPORTS,
       default_type: sport_data.ALTITUDE,
       x: 140,
-      y: 30,
+      y: 15,
       w: 200,
-      h: 60,
-      text_size: 36,
+      h: 40,
+      text_size: 32,
       text_color: 0xffffff,
       text_x: 0,
       text_y: 0,
       text_w: 200,
-      text_h: 45,
+      text_h: 35,
       align_h: align.CENTER_H,
       rect_visible: false,
     });
@@ -193,14 +184,80 @@ DataWidget({
     createWidget(widget.TEXT, {
       text: "m",
       x: 0,
-      y: 60,
+      y: 50,
       w: 480,
-      h: 26,
-      text_size: 20,
+      h: 18,
+      text_size: 16,
       text_color: 0xcccccc,
       align_h: align.CENTER_H,
     });
 
+    // === INDICATEUR THERMIQUE (haut droite) ===
+    this.state.thermalIndicator = createWidget(widget.TEXT, {
+      x: 320,
+      y: 10,
+      w: 150,
+      h: 60,
+      text: "",
+      text_size: 16,
+      text_color: 0x00ff00,
+      align_h: align.CENTER_H,
+      text_style: text_style.WRAP,
+    });
+
+    // === CHEVRONS ===
+    this.state.chevrons = [];
+    for (let i = 0; i < 3; i++) {
+      this.state.chevrons.push(
+          createWidget(widget.IMG, {
+            x: 220,
+            y: 80 + i * 30,
+            w: 40,
+            h: 40,
+            src: "chevron_neutral.png",
+            alpha: 100,
+          }),
+      );
+    }
+
+    // === VITESSE VERTICALE (centre) ===
+    this.state.vSpeedWidget = createWidget(widget.TEXT, {
+      text: "---",
+      x: 0,
+      y: 180,
+      w: 480,
+      h: 120,
+      text_size: 100,
+      text_color: 0xffffff,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
+    });
+
+    createWidget(widget.TEXT, {
+      text: "m/s",
+      x: 0,
+      y: 290,
+      w: 480,
+      h: 30,
+      text_size: 24,
+      text_color: 0xcccccc,
+      align_h: align.CENTER_H,
+    });
+
+    // === STATS THERMIQUES (milieu gauche) ===
+    this.state.statsWidget = createWidget(widget.TEXT, {
+      text: "Thermals: 0",
+      x: 70,
+      y: 330,
+      w: 150,
+      h: 40,
+      text_size: 14,
+      text_color: 0x888888,
+      align_h: align.LEFT,
+      text_style: text_style.WRAP,
+    });
+
+    // === VITESSE SOL ET DISTANCE (en bas) ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 2,
       category: edit_widget_group_type.SPORTS,
@@ -208,7 +265,7 @@ DataWidget({
       x: 60,
       y: 380,
       w: 170,
-      h: 70,
+      h: 60,
       text_size: 32,
       text_color: 0xffffff,
       text_x: 0,
@@ -222,7 +279,7 @@ DataWidget({
     createWidget(widget.TEXT, {
       text: "km/h",
       x: 60,
-      y: 420,
+      y: 430,
       w: 170,
       h: 26,
       text_size: 20,
@@ -237,7 +294,7 @@ DataWidget({
       x: 250,
       y: 380,
       w: 170,
-      h: 70,
+      h: 60,
       text_size: 32,
       text_color: 0xffffff,
       text_x: 0,
@@ -251,7 +308,7 @@ DataWidget({
     createWidget(widget.TEXT, {
       text: "km",
       x: 250,
-      y: 420,
+      y: 430,
       w: 170,
       h: 26,
       text_size: 20,
@@ -259,36 +316,24 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    this.state.modeIndicator = createWidget(widget.TEXT, {
-      x: 0,
-      y: 450,
-      w: 480,
-      h: 25,
-      color: 0x666666,
-      text_size: 18,
-      align_h: align.CENTER_H,
-      text_style: text_style.NONE,
-      text: "DETECT...",
-    });
-
     this.initAudioPlayer();
     this.initVibrator();
 
-    this.state.logger.log("=== LIFECYCLE: build END ===");
+    console.log("=== LIFECYCLE: build END ===");
 
     this.detectAndStart();
   },
 
   initAudioPlayer() {
     try {
-      this.state.logger.log("[initAudioPlayer] Start");
+      console.log("[initAudioPlayer] Start");
       this.state.player = new SoundPlayer();
       this.state.player.set.volume(100);
 
       this.state.player.onComplete((info) => {
         if (
-          this.state.isActive &&
-          Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
+            this.state.isActive &&
+            Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
         ) {
           setTimeout(() => {
             if (this.state.isActive) {
@@ -299,96 +344,88 @@ DataWidget({
       });
 
       this.state.player.onFail((info) => {
-        this.state.logger.error(`[initAudioPlayer] Failed: ${info.name}`);
+        console.log(`[initAudioPlayer] Failed: ${info.name}`);
       });
 
-      this.state.logger.log("[initAudioPlayer] OK");
+      console.log("[initAudioPlayer] OK");
     } catch (error) {
-      this.state.logger.error("[initAudioPlayer] Error:", error);
+      console.log(`[initAudioPlayer] Error: ${error}`);
     }
   },
 
   initVibrator() {
     try {
-      this.state.logger.log("[initVibrator] Start");
+      console.log("[initVibrator] Start");
       this.state.vibrator = new Vibrator();
-      this.state.logger.log("[initVibrator] OK");
+      console.log("[initVibrator] OK");
     } catch (error) {
-      this.state.logger.error("[initVibrator] Error:", error);
+      console.log(`[initVibrator] Error: ${error}`);
     }
   },
 
   detectAndStart() {
     this.state.isActive = true;
     this.state.monitoringActive = true;
-    this.state.logger.log("[detectAndStart] === START ===");
+    console.log("[detectAndStart] === START ===");
 
     const testResult = getSportData(
-      { type: "vertical_speed" },
-      (callbackResult) => {
-        this.state.logger.log(
-          `[detectAndStart] Callback: code=${callbackResult.code}`,
-        );
-      },
+        { type: "vertical_speed" },
+        (callbackResult) => {
+          console.log(`[detectAndStart] Callback: code=${callbackResult.code}`);
+        },
     );
 
-    this.state.logger.log(`[detectAndStart] Result: ${testResult}`);
+    console.log(`[detectAndStart] Result: ${testResult}`);
 
     if (testResult === true) {
-      this.state.logger.log("[detectAndStart] REAL DATA MODE");
+      console.log("[detectAndStart] REAL DATA MODE");
       this.state.isSimulation = false;
-
-      if (this.state.modeIndicator) {
-        this.state.modeIndicator.setProperty(prop.MORE, {
-          text: "REAL",
-          color: 0x00ff00,
-        });
-      }
     } else {
-      this.state.logger.log("[detectAndStart] SIMULATION MODE");
+      console.log("[detectAndStart] SIMULATION MODE");
       this.state.isSimulation = true;
-
-      if (this.state.modeIndicator) {
-        this.state.modeIndicator.setProperty(prop.MORE, {
-          text: "SIM",
-          color: 0xff9900,
-        });
-      }
     }
 
     this.startAnimation();
     this.startMonitoring();
 
-    this.state.logger.log("[detectAndStart] === END ===");
+    console.log("[detectAndStart] === END ===");
   },
 
   startMonitoring() {
-    this.state.logger.log("[startMonitoring] START");
+    console.log("[startMonitoring] START");
 
     if (this.state.monitoringInterval) {
-      this.state.logger.log("[startMonitoring] Already running");
+      console.log("[startMonitoring] Already running");
       return;
     }
 
     this.state.monitoringActive = true;
     this.monitoringLoop();
 
-    this.state.logger.log("[startMonitoring] Loop started");
+    console.log("[startMonitoring] Loop started");
   },
 
   monitoringLoop() {
     if (!this.state.monitoringActive || !this.state.isActive) {
-      this.state.logger.log(
-        `[monitoringLoop] STOP (active=${this.state.monitoringActive})`,
-      );
+      console.log(`[monitoringLoop] STOP (active=${this.state.monitoringActive})`);
       return;
     }
 
-    this.state.logger.log("[monitoringLoop] TICK");
+    console.log("[monitoringLoop] TICK");
 
     if (this.state.isSimulation) {
       const mockVSpeed = (Math.random() - 0.5) * 8;
-      this.state.logger.log(`[monitoringLoop] SIM: ${mockVSpeed.toFixed(2)}`);
+      console.log(`[monitoringLoop] SIM: ${mockVSpeed.toFixed(2)}`);
+
+      if (this.state.vSpeedWidget) {
+        this.state.vSpeedWidget.setProperty(prop.MORE, {
+          text: mockVSpeed.toFixed(2),
+        });
+      }
+
+      // Altitude simulée
+      this.state.currentAltitude = 1000 + Math.random() * 100;
+
       this.updateFeedback(mockVSpeed);
     } else {
       this.fetchRealData();
@@ -396,11 +433,11 @@ DataWidget({
 
     this.state.monitoringInterval = setTimeout(() => {
       this.monitoringLoop();
-    }, 1000);
+    }, 500);
   },
 
   stopMonitoring() {
-    this.state.logger.log("[stopMonitoring] STOP");
+    console.log("[stopMonitoring] STOP");
     this.state.monitoringActive = false;
 
     if (this.state.monitoringInterval) {
@@ -410,70 +447,256 @@ DataWidget({
   },
 
   fetchRealData() {
-    this.state.logger.log("[fetchRealData] Fetching...");
+    const fetchTime = Date.now();
+    console.log(`[fetchRealData] >>> START at ${fetchTime}`);
 
+    // Récupérer vitesse verticale
     getSportData({ type: "vertical_speed" }, (callbackResult) => {
+      const callbackTime = Date.now();
       const { code, data } = callbackResult;
+
+      console.log(`[fetchRealData] Callback after ${callbackTime - fetchTime}ms`);
 
       if (code === 0) {
         try {
-          const [{ vertical_speed }] = JSON.parse(data);
-          this.state.logger.log(`[fetchRealData] Raw data: ${data}`);
+          const parsed = JSON.parse(data);
+          console.log(`[fetchRealData] Raw data: ${data}`);
 
-          if (vertical_speed !== undefined) {
-            const rawValue = parseFloat(vertical_speed);
+          if (parsed && parsed[0] && parsed[0].vertical_speed !== undefined) {
+            const rawValue = parseFloat(parsed[0].vertical_speed);
 
-            // LOGS DÉTAILLÉS
-            this.state.logger.log(`[fetchRealData] Raw value: ${rawValue}`);
-            this.state.logger.log(`[fetchRealData] Type: ${typeof rawValue}`);
-            this.state.logger.log(
-              `[fetchRealData] Is negative? ${rawValue < 0}`,
-            );
+            const vSpeed1 = rawValue / 100;
+            const vSpeed2 = (rawValue - 32768) / 100;
+            const vSpeed3 = rawValue > 32768 ? (rawValue - 65536) / 100 : rawValue / 100;
 
-            // Test plusieurs conversions
-            const vSpeed1 = rawValue / 100; // Standard
-            const vSpeed2 = (rawValue - 32768) / 100; // Si unsigned 16-bit
-            const vSpeed3 =
-              rawValue > 32768 ? (rawValue - 65536) / 100 : rawValue / 100; // Si unsigned
+            console.log("========================================");
+            console.log(`Raw: ${rawValue}`);
+            console.log(`÷100: ${vSpeed1.toFixed(2)}`);
+            console.log(`-32768÷100: ${vSpeed2.toFixed(2)}`);
+            console.log(`Unsigned: ${vSpeed3.toFixed(2)}`);
+            console.log("========================================");
 
-            this.state.logger.log(
-              `[fetchRealData] ÷100: ${vSpeed1.toFixed(2)}`,
-            );
-            this.state.logger.log(
-              `[fetchRealData] -32768÷100: ${vSpeed2.toFixed(2)}`,
-            );
-            this.state.logger.log(
-              `[fetchRealData] Unsigned: ${vSpeed3.toFixed(2)}`,
-            );
-
-            // Utiliser la conversion appropriée (à ajuster selon les logs)
             const vSpeed = vSpeed1;
 
-            this.state.logger.log(
-              `[fetchRealData] Final: ${vSpeed.toFixed(2)} m/s`,
-            );
+            if (this.state.vSpeedWidget) {
+              this.state.vSpeedWidget.setProperty(prop.MORE, {
+                text: vSpeed.toFixed(2),
+              });
+            }
+
+            console.log(`VSpeed: ${vSpeed.toFixed(2)} m/s`);
+
             this.updateFeedback(vSpeed);
           }
         } catch (error) {
-          this.state.logger.error(`[fetchRealData] Error: ${error}`);
+          console.log(`[fetchRealData] Error: ${error}`);
         }
       } else {
-        this.state.logger.error(`[fetchRealData] Code: ${code}`);
+        console.log(`[fetchRealData] Code: ${code}`);
+      }
+    });
+
+    // Récupérer altitude
+    getSportData({ type: "altitude" }, (callbackResult) => {
+      if (callbackResult.code === 0) {
+        try {
+          const parsed = JSON.parse(callbackResult.data);
+          if (parsed && parsed[0] && parsed[0].altitude !== undefined) {
+            this.state.currentAltitude = parseFloat(parsed[0].altitude);
+            console.log(`[fetchRealData] Altitude: ${this.state.currentAltitude.toFixed(0)}m`);
+          }
+        } catch (error) {
+          console.log(`[fetchRealData] Altitude error: ${error}`);
+        }
       }
     });
   },
 
   updateFeedback(vSpeed) {
-    this.state.logger.log(`[updateFeedback] ${vSpeed.toFixed(2)} m/s`);
+    console.log(`[updateFeedback] ${vSpeed.toFixed(2)} m/s`);
     this.state.lastVerticalSpeed = vSpeed;
+
+    this.detectThermal(vSpeed);
     this.updateChevrons(vSpeed);
     this.handleVibration(vSpeed);
     this.playVariometerSound(vSpeed);
   },
 
+  detectThermal(vSpeed) {
+    const now = Date.now();
+
+    if (!this.state.inThermal) {
+      // Pas dans un thermique, chercher l'entrée
+      if (vSpeed >= this.config.thermal.minClimbRate) {
+        console.log("[detectThermal] ✅ ENTERING THERMAL");
+        this.state.inThermal = true;
+        this.state.thermalStartTime = now;
+        this.state.thermalStartAltitude = this.state.currentAltitude;
+
+        this.state.currentThermal = {
+          startTime: now,
+          startAltitude: this.state.currentAltitude,
+          maxClimbRate: vSpeed,
+          samples: [vSpeed],
+        };
+
+        // Vibration d'entrée en thermique
+        if (this.state.vibrator) {
+          this.executeVibrationPattern(this.config.vibration.patterns.thermalEntry);
+        }
+
+        // Flash visuel
+        this.flashThermalEntry();
+      }
+    } else {
+      // Dans un thermique
+      if (vSpeed < this.config.thermal.exitClimbRate) {
+        // Sortie du thermique
+        const duration = now - this.state.thermalStartTime;
+        const altitudeGain = this.state.currentAltitude - this.state.thermalStartAltitude;
+
+        console.log(`[detectThermal] ❌ EXITING THERMAL - Duration: ${(duration/1000).toFixed(1)}s, Gain: ${altitudeGain.toFixed(0)}m`);
+
+        // Vérifier si c'est un vrai thermique
+        if (duration >= this.config.thermal.minDuration &&
+            altitudeGain >= this.config.thermal.minAltitudeGain) {
+
+          const samples = this.state.currentThermal.samples;
+          const avgClimbRate = samples.reduce((a, b) => a + b, 0) / samples.length;
+
+          const thermal = {
+            startTime: this.state.thermalStartTime,
+            endTime: now,
+            duration: duration,
+            startAltitude: this.state.thermalStartAltitude,
+            endAltitude: this.state.currentAltitude,
+            altitudeGain: altitudeGain,
+            maxClimbRate: this.state.currentThermal.maxClimbRate,
+            averageClimbRate: avgClimbRate,
+          };
+
+          this.state.thermalHistory.push(thermal);
+
+          console.log(`[detectThermal] 🌀 THERMAL SAVED: +${altitudeGain.toFixed(0)}m, avg ${avgClimbRate.toFixed(1)} m/s`);
+
+          // Garder les 10 derniers
+          if (this.state.thermalHistory.length > 10) {
+            this.state.thermalHistory.shift();
+          }
+
+          // Mettre à jour les stats
+          this.updateThermalStats();
+        } else {
+          console.log("[detectThermal] ⚠️ Not a valid thermal (too short or too weak)");
+        }
+
+        this.state.inThermal = false;
+        this.state.currentThermal = null;
+      } else {
+        // Toujours dans le thermique
+        this.state.currentThermal.samples.push(vSpeed);
+        this.state.currentThermal.maxClimbRate = Math.max(
+            this.state.currentThermal.maxClimbRate,
+            vSpeed
+        );
+      }
+    }
+
+    // Mettre à jour l'indicateur
+    this.updateThermalIndicator();
+  },
+
+  updateThermalIndicator() {
+    if (!this.state.thermalIndicator) return;
+
+    if (this.state.inThermal) {
+      const duration = (Date.now() - this.state.thermalStartTime) / 1000;
+      const gain = this.state.currentAltitude - this.state.thermalStartAltitude;
+
+      this.state.thermalIndicator.setProperty(prop.MORE, {
+        text: `🌀 THERMALn+${gain.toFixed(0)}mn${duration.toFixed(0)}s`,
+        color: 0x00ff00,
+      });
+    } else {
+      this.state.thermalIndicator.setProperty(prop.MORE, {
+        text: "",
+      });
+    }
+  },
+
+  updateThermalStats() {
+    if (!this.state.statsWidget) return;
+
+    if (this.state.thermalHistory.length === 0) {
+      this.state.statsWidget.setProperty(prop.MORE, {
+        text: "Thermals: 0",
+      });
+      return;
+    }
+
+    const totalGain = this.state.thermalHistory.reduce((sum, t) => sum + t.altitudeGain, 0);
+    const avgGain = totalGain / this.state.thermalHistory.length;
+
+    this.state.statsWidget.setProperty(prop.MORE, {
+      text: `Thermals: ${this.state.thermalHistory.length}nAvg: +${avgGain.toFixed(0)}m`,
+    });
+  },
+
+  flashThermalEntry() {
+    let flashCount = 0;
+    const flashInterval = setInterval(() => {
+      if (flashCount >= 6) {
+        clearInterval(flashInterval);
+        return;
+      }
+
+      if (this.state.leftBar && this.state.rightBar) {
+        const color = flashCount % 2 === 0 ? 0x00ff00 : 0x333333;
+        this.state.leftBar.setProperty(prop.MORE, { color: color });
+        this.state.rightBar.setProperty(prop.MORE, { color: color });
+      }
+
+      flashCount++;
+    }, 150);
+  },
+
+  showThermalHistory() {
+    console.log("n=== 🌀 THERMAL HISTORY ===");
+
+    if (this.state.thermalHistory.length === 0) {
+      console.log("No thermals detected yet");
+      console.log("=========================n");
+      return;
+    }
+
+    this.state.thermalHistory.forEach((thermal, index) => {
+      const date = new Date(thermal.startTime);
+      const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+      console.log(`nThermal #${index + 1} at ${timeStr}:`);
+      console.log(`  Duration: ${(thermal.duration / 1000).toFixed(0)}s`);
+      console.log(`  Altitude: ${thermal.startAltitude.toFixed(0)}m → ${thermal.endAltitude.toFixed(0)}m`);
+      console.log(`  Gain: +${thermal.altitudeGain.toFixed(0)}m`);
+      console.log(`  Avg climb: ${thermal.averageClimbRate.toFixed(1)} m/s`);
+      console.log(`  Max climb: ${thermal.maxClimbRate.toFixed(1)} m/s`);
+    });
+
+    const totalGain = this.state.thermalHistory.reduce((sum, t) => sum + t.altitudeGain, 0);
+    const avgGain = totalGain / this.state.thermalHistory.length;
+    const totalDuration = this.state.thermalHistory.reduce((sum, t) => sum + t.duration, 0) / 1000;
+
+    console.log(`n📊 STATISTICS:`);
+    console.log(`  Total thermals: ${this.state.thermalHistory.length}`);
+    console.log(`  Total gain: +${totalGain.toFixed(0)}m`);
+    console.log(`  Average gain: +${avgGain.toFixed(0)}m`);
+    console.log(`  Total time in thermals: ${totalDuration.toFixed(0)}s`);
+
+    console.log("n=========================n");
+  },
+
   updateChevrons(vSpeed) {
     if (!this.state.chevrons) {
-      this.state.logger.error("[updateChevrons] No chevrons");
+      console.log("[updateChevrons] No chevrons");
       return;
     }
 
@@ -494,7 +717,7 @@ DataWidget({
       this.state.chevrons.forEach((chevron, i) => {
         chevron.setProperty(prop.MORE, {
           src: "chevron_down.png",
-          alpha: 2 - i < numChevrons ? 255 : 50, // ← CORRIGÉ : parenthèses ajoutées
+          alpha: (2 - i) < numChevrons ? 255 : 50,
         });
       });
     } else {
@@ -510,12 +733,11 @@ DataWidget({
   updateAnimations() {
     const vSpeed = this.state.lastVerticalSpeed;
 
-    // Animer les chevrons (images)
     if (this.state.chevrons && Math.abs(vSpeed) > this.config.deadband) {
-      const offset = Math.sin((this.state.animationPhase * Math.PI) / 5) * 5; // Réduit à 5px
+      const offset = Math.sin((this.state.animationPhase * Math.PI) / 5) * 5;
 
       this.state.chevrons.forEach((chevron, i) => {
-        let baseY = 90 + i * 25; // ← Ajusté à 60px d'espacement
+        let baseY = 80 + i * 30;
 
         if (vSpeed > this.config.deadband) {
           chevron.setProperty(prop.MORE, { y: baseY - Math.abs(offset) });
@@ -525,8 +747,10 @@ DataWidget({
       });
     }
 
-    // Animer les barres latérales (AJOUTÉ)
     if (this.state.leftBar && this.state.rightBar) {
+      // Ne pas animer si flash thermique en cours
+      if (this.state.inThermal) return;
+
       let barColor = 0x333333;
       let barHeight = 480;
       let barY = 0;
@@ -562,16 +786,16 @@ DataWidget({
   },
 
   onResume() {
-    this.state.logger.log("=== LIFECYCLE: onResume ===");
+    console.log("=== LIFECYCLE: onResume ===");
     this.state.isActive = true;
 
     if (this.state.monitoringActive && !this.state.monitoringInterval) {
-      this.state.logger.log("[onResume] Restarting monitoring");
+      console.log("[onResume] Restarting monitoring");
       this.monitoringLoop();
     }
 
     if (!this.state.animationInterval) {
-      this.state.logger.log("[onResume] Restarting animations");
+      console.log("[onResume] Restarting animations");
       this.startAnimation();
     }
 
@@ -579,28 +803,34 @@ DataWidget({
       pauseDropWristScreenOff({ duration: 0 });
       pausePalmScreenOff({ duration: 0 });
     } catch (error) {
-      this.state.logger.error("[onResume] Error:", error);
+      console.log(`[onResume] Error: ${error}`);
     }
   },
 
   onPause() {
-    this.state.logger.log("=== LIFECYCLE: onPause ===");
+    console.log("=== LIFECYCLE: onPause ===");
 
     if (this.state.monitoringInterval) {
-      this.state.logger.log("[onPause] Clearing monitoring");
+      console.log("[onPause] Clearing monitoring");
       clearTimeout(this.state.monitoringInterval);
       this.state.monitoringInterval = null;
     }
 
     if (this.state.animationInterval) {
-      this.state.logger.log("[onPause] Clearing animations");
+      console.log("[onPause] Clearing animations");
       clearInterval(this.state.animationInterval);
       this.state.animationInterval = null;
     }
   },
 
   onDestroy() {
-    this.state.logger.log("=== LIFECYCLE: onDestroy ===");
+    console.log("=== LIFECYCLE: onDestroy ===");
+
+    // Afficher un résumé final
+    if (this.state.thermalHistory.length > 0) {
+      this.showThermalHistory();
+    }
+
     this.state.isActive = false;
     this.state.monitoringActive = false;
 
@@ -619,7 +849,7 @@ DataWidget({
       pauseDropWristScreenOff({ duration: 1 });
       pausePalmScreenOff({ duration: 1 });
     } catch (error) {
-      this.state.logger.error("[onDestroy] Error:", error);
+      console.log(`[onDestroy] Error: ${error}`);
     }
   },
 
@@ -628,7 +858,7 @@ DataWidget({
       return;
     }
 
-    this.state.logger.log("[startAnimation] Starting");
+    console.log("[startAnimation] Starting");
 
     this.state.animationInterval = setInterval(() => {
       if (this.state.isActive) {
@@ -642,7 +872,7 @@ DataWidget({
     if (this.state.animationInterval) {
       clearInterval(this.state.animationInterval);
       this.state.animationInterval = null;
-      this.state.logger.log("[stopAnimation] Stopped");
+      console.log("[stopAnimation] Stopped");
     }
   },
 
@@ -700,13 +930,13 @@ DataWidget({
     if (count > 1) {
       for (let i = 1; i < count; i++) {
         setTimeout(
-          () => {
-            this.state.vibrator.start();
-            setTimeout(() => {
-              this.state.vibrator.stop();
-            }, duration);
-          },
-          i * (duration + gap),
+            () => {
+              this.state.vibrator.start();
+              setTimeout(() => {
+                this.state.vibrator.stop();
+              }, duration);
+            },
+            i * (duration + gap),
         );
       }
     }
@@ -745,9 +975,15 @@ DataWidget({
 
     if (soundFile && soundFile !== this.state.currentSound) {
       this.state.currentSound = soundFile;
-      this.state.logger.log(`[playVariometerSound] ${soundFile}`);
-      this.state.player.changeFile(`assets://raw/media/${soundFile}`);
-      this.state.player.play();
+      const fullPath = `raw/media/${soundFile}`;
+
+      console.log(`[playVariometerSound] Playing: ${fullPath}`);
+
+      try {
+        this.state.player.play(fullPath);
+      } catch (error) {
+        console.log(`[playVariometerSound] Error: ${error}`);
+      }
     }
   },
 });

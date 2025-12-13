@@ -13,7 +13,7 @@
     "vender": "Vincent Capicotto",
     "description": "Variomètre pour parapente"
   },
-  "permissions": ["data:user.hd.workout"],
+  "permissions": ["data:user.hd.workout", "device:os.media"],
   "runtime": {
     "apiVersion": {
       "compatible": "3.6",
