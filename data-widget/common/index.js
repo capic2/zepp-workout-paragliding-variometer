@@ -36,18 +36,48 @@ DataWidget({
     chevrons: [],
     vSpeedWidget: null,
     currentAltitude: 0,
+    currentSpeed: 0,
+
+    flightState: "WAITING",
+    takeoffAltitude: 0,
+    takeoffTime: null,
+    landingDetectionStartTime: null,
+    landingDetectionAltitude: null,
+
+    flightStartTime: null,
+    maxAltitude: 0,
+    maxAltitudeGain: 0,
+
     thermalHistory: [],
     currentThermal: null,
     thermalStartAltitude: null,
     thermalStartTime: null,
     inThermal: false,
     thermalIndicator: null,
-    statsWidget: null,
+
+    flightStateIndicator: null,
+    flightDurationWidget: null,
+    altitudeWidget: null,
+    gainWidget: null,
+    maxAltWidget: null,
   },
 
   config: {
     deadband: 0.2,
     animationInterval: 100,
+
+    takeoff: {
+      minGroundSpeed: 10,
+      minVerticalSpeed: 0.5,
+      minAltitudeGain: 5,
+    },
+
+    landing: {
+      maxGroundSpeed: 5,
+      maxVerticalSpeed: 0.3,
+      maxAltitudeChange: 2,
+      confirmationTime: 10000,
+    },
 
     thresholds: {
       climbWeak: 0.2,
@@ -59,10 +89,10 @@ DataWidget({
     },
 
     thermal: {
-      minClimbRate: 0.5,        // m/s minimum pour considérer un thermique
-      minDuration: 10000,       // 10 secondes minimum
-      minAltitudeGain: 20,      // 20m minimum de gain
-      exitClimbRate: 0.2,       // Sortie du thermique si < 0.2 m/s
+      minClimbRate: 0.5,
+      minDuration: 10000,
+      minAltitudeGain: 20,
+      exitClimbRate: 0.2,
     },
 
     vibration: {
@@ -75,11 +105,16 @@ DataWidget({
         sink: { duration: 300, interval: 3000 },
         sinkStrong: { duration: 400, count: 2, gap: 200, interval: 2000 },
         thermalEntry: { duration: 200, count: 3, gap: 100, interval: 0 },
+        takeoff: { duration: 300, count: 3, gap: 200, interval: 0 },
+        landing: { duration: 500, count: 2, gap: 300, interval: 0 },
       },
     },
 
     colors: {
-      neutral: 0x1a1a1a,
+      neutral: 0x000000,
+      waiting: 0xffff00,
+      flying: 0x00ff00,
+      landed: 0xff8800,
     },
 
     climb: [
@@ -119,13 +154,13 @@ DataWidget({
       console.log(`[build] Screen error: ${error}`);
     }
 
-    // Fond
+    // Fond noir pur
     createWidget(widget.FILL_RECT, {
       x: 0,
       y: 0,
       w: 480,
       h: 480,
-      color: this.config.colors.neutral,
+      color: 0x000000,
     });
 
     // Barres latérales
@@ -146,77 +181,125 @@ DataWidget({
       color: 0x333333,
     });
 
-    // === BOUTON STATS (haut gauche) ===
-    createWidget(widget.BUTTON, {
-      x: 10,
-      y: 10,
-      w: 80,
-      h: 40,
-      text: "📊",
-      text_size: 24,
-      radius: 8,
-      normal_color: 0x333333,
-      press_color: 0x555555,
-      click_func: () => {
-        this.showThermalHistory();
-      },
+    // === ÉTAT VOL (centre haut) ===
+    this.state.flightStateIndicator = createWidget(widget.TEXT, {
+      x: 0,
+      y: 25,
+      w: 480,
+      h: 30,
+      text: "⏸️ WAITING",
+      text_size: 18,
+      color: 0xffff00,
+      align_h: align.CENTER_H,
     });
 
-    // === ALTITUDE (haut centre) ===
-    createWidget(widget.SPORT_DATA, {
-      edit_id: 1,
-      category: edit_widget_group_type.SPORTS,
-      default_type: sport_data.ALTITUDE,
-      x: 140,
-      y: 15,
-      w: 200,
-      h: 40,
-      text_size: 32,
-      text_color: 0xffffff,
-      text_x: 0,
-      text_y: 0,
-      text_w: 200,
-      text_h: 35,
+    // === DURÉE VOL ===
+    this.state.flightDurationWidget = createWidget(widget.TEXT, {
+      x: 0,
+      y: 55,
+      w: 480,
+      h: 28,
+      text: "00:00",
+      text_size: 20,
+      color: 0xffffff,
       align_h: align.CENTER_H,
-      rect_visible: false,
+    });
+
+    // === ALTITUDE (gauche) ===
+    this.state.altitudeWidget = createWidget(widget.TEXT, {
+      x: 70,
+      y: 95,
+      w: 85,
+      h: 80,
+      text: "---",
+      text_size: 36,
+      color: 0xffffff,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
     });
 
     createWidget(widget.TEXT, {
       text: "m",
-      x: 0,
-      y: 50,
-      w: 480,
+      x: 70,
+      y: 170,
+      w: 85,
       h: 18,
-      text_size: 16,
-      text_color: 0xcccccc,
+      text_size: 14,
+      color: 0xcccccc,
       align_h: align.CENTER_H,
     });
 
-    // === INDICATEUR THERMIQUE (haut droite) ===
+    // === GAIN ALTITUDE (droite haut) ===
+    createWidget(widget.TEXT, {
+      text: "↗",
+      x: 325,
+      y: 95,
+      w: 85,
+      h: 22,
+      text_size: 18,
+      color: 0xcccccc,
+      align_h: align.CENTER_H,
+    });
+
+    this.state.gainWidget = createWidget(widget.TEXT, {
+      x: 325,
+      y: 117,
+      w: 85,
+      h: 35,
+      text: "+0m",
+      text_size: 24,
+      color: 0x00ff00,
+      align_h: align.CENTER_H,
+    });
+
+    // === ALTITUDE MAX (droite bas) ===
+    createWidget(widget.TEXT, {
+      text: "MAX",
+      x: 325,
+      y: 150,
+      w: 85,
+      h: 18,
+      text_size: 12,
+      color: 0xcccccc,
+      align_h: align.CENTER_H,
+    });
+
+    this.state.maxAltWidget = createWidget(widget.TEXT, {
+      x: 325,
+      y: 168,
+      w: 85,
+      h: 28,
+      text: "0m",
+      text_size: 18,
+      color: 0xff8800,
+      align_h: align.CENTER_H,
+    });
+
+    // === INDICATEUR THERMIQUE (centre) ===
     this.state.thermalIndicator = createWidget(widget.TEXT, {
-      x: 320,
-      y: 10,
-      w: 150,
-      h: 60,
+      x: 160,
+      y: 90,
+      w: 160,
+      h: 55,
       text: "",
-      text_size: 16,
-      text_color: 0x00ff00,
+      text_size: 13,
+      color: 0x00ff00,
       align_h: align.CENTER_H,
       text_style: text_style.WRAP,
     });
 
-    // === CHEVRONS ===
+    // === CHEVRONS (centre) ===
     this.state.chevrons = [];
     for (let i = 0; i < 3; i++) {
       this.state.chevrons.push(
-          createWidget(widget.IMG, {
-            x: 220,
-            y: 80 + i * 30,
-            w: 40,
-            h: 40,
-            src: "chevron_neutral.png",
-            alpha: 100,
-          }),
+        createWidget(widget.IMG, {
+          x: 220,
+          y: 150 + i * 30,
+          w: 40,
+          h: 40,
+          src: "chevron_neutral.png",
+          alpha: 100,
+        }),
       );
     }
 
@@ -224,11 +307,11 @@ DataWidget({
     this.state.vSpeedWidget = createWidget(widget.TEXT, {
       text: "---",
       x: 0,
-      y: 180,
+      y: 250,
       w: 480,
-      h: 120,
-      text_size: 100,
-      text_color: 0xffffff,
+      h: 90,
+      text_size: 85,
+      color: 0xffffff,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
     });
@@ -236,71 +319,82 @@ DataWidget({
     createWidget(widget.TEXT, {
       text: "m/s",
       x: 0,
-      y: 290,
+      y: 335,
       w: 480,
-      h: 30,
-      text_size: 24,
-      text_color: 0xcccccc,
+      h: 22,
+      text_size: 18,
+      color: 0xcccccc,
       align_h: align.CENTER_H,
     });
 
-    // === STATS THERMIQUES (milieu gauche) ===
-    this.state.statsWidget = createWidget(widget.TEXT, {
-      text: "Thermals: 0",
-      x: 70,
-      y: 330,
-      w: 150,
-      h: 40,
-      text_size: 14,
-      text_color: 0x888888,
-      align_h: align.LEFT,
-      text_style: text_style.WRAP,
+    // === NOMBRE THERMIQUES (centre) ===
+    createWidget(widget.TEXT, {
+      text: "🌀",
+      x: 170,
+      y: 360,
+      w: 35,
+      h: 28,
+      text_size: 22,
+      color: 0xffffff,
+      align_h: align.CENTER_H,
     });
 
-    // === VITESSE SOL ET DISTANCE (en bas) ===
+    this.state.thermalCountWidget = createWidget(widget.TEXT, {
+      x: 205,
+      y: 360,
+      w: 110,
+      h: 28,
+      text: "0 thermals",
+      text_size: 15,
+      color: 0xcccccc,
+      align_h: align.LEFT,
+    });
+
+    // === VITESSE SOL (en bas gauche) ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 2,
       category: edit_widget_group_type.SPORTS,
       default_type: sport_data.SPEED,
-      x: 60,
-      y: 380,
-      w: 170,
-      h: 60,
-      text_size: 32,
-      text_color: 0xffffff,
+      x: 80,
+      y: 395,
+      w: 150,
+      h: 45,
+      text_size: 26,
+      color: 0xffffff,
       text_x: 0,
       text_y: 0,
-      text_w: 170,
-      text_h: 50,
+      text_w: 150,
+      text_h: 38,
       align_h: align.LEFT,
       rect_visible: false,
     });
 
     createWidget(widget.TEXT, {
       text: "km/h",
-      x: 60,
-      y: 430,
-      w: 170,
-      h: 26,
-      text_size: 20,
-      text_color: 0xcccccc,
+      x: 80,
+      y: 435,
+      w: 150,
+      h: 18,
+      text_size: 14,
+      color: 0xcccccc,
       align_h: align.CENTER_H,
     });
 
+    // === DISTANCE (en bas droite) ===
     createWidget(widget.SPORT_DATA, {
       edit_id: 3,
       category: edit_widget_group_type.SPORTS,
       default_type: sport_data.DISTANCE_TOTAL,
       x: 250,
-      y: 380,
-      w: 170,
-      h: 60,
-      text_size: 32,
-      text_color: 0xffffff,
+      y: 395,
+      w: 150,
+      h: 45,
+      text_size: 26,
+      color: 0xffffff,
       text_x: 0,
       text_y: 0,
-      text_w: 170,
-      text_h: 50,
+      text_w: 150,
+      text_h: 38,
       align_h: align.RIGHT,
       rect_visible: false,
     });
@@ -308,11 +402,11 @@ DataWidget({
     createWidget(widget.TEXT, {
       text: "km",
       x: 250,
-      y: 430,
-      w: 170,
-      h: 26,
-      text_size: 20,
-      text_color: 0xcccccc,
+      y: 435,
+      w: 150,
+      h: 18,
+      text_size: 14,
+      color: 0xcccccc,
       align_h: align.CENTER_H,
     });
 
@@ -332,8 +426,9 @@ DataWidget({
 
       this.state.player.onComplete((info) => {
         if (
-            this.state.isActive &&
-            Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
+          this.state.isActive &&
+          this.state.flightState === "FLYING" &&
+          Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
         ) {
           setTimeout(() => {
             if (this.state.isActive) {
@@ -366,13 +461,16 @@ DataWidget({
   detectAndStart() {
     this.state.isActive = true;
     this.state.monitoringActive = true;
+    this.state.flightState = "WAITING";
+
     console.log("[detectAndStart] === START ===");
+    console.log("[detectAndStart] ⏸️ Waiting for takeoff...");
 
     const testResult = getSportData(
-        { type: "vertical_speed" },
-        (callbackResult) => {
-          console.log(`[detectAndStart] Callback: code=${callbackResult.code}`);
-        },
+      { type: "vertical_speed" },
+      (callbackResult) => {
+        console.log(`[detectAndStart] Callback: code=${callbackResult.code}`);
+      },
     );
 
     console.log(`[detectAndStart] Result: ${testResult}`);
@@ -407,15 +505,14 @@ DataWidget({
 
   monitoringLoop() {
     if (!this.state.monitoringActive || !this.state.isActive) {
-      console.log(`[monitoringLoop] STOP (active=${this.state.monitoringActive})`);
+      console.log(
+        `[monitoringLoop] STOP (active=${this.state.monitoringActive})`,
+      );
       return;
     }
 
-    console.log("[monitoringLoop] TICK");
-
     if (this.state.isSimulation) {
       const mockVSpeed = (Math.random() - 0.5) * 8;
-      console.log(`[monitoringLoop] SIM: ${mockVSpeed.toFixed(2)}`);
 
       if (this.state.vSpeedWidget) {
         this.state.vSpeedWidget.setProperty(prop.MORE, {
@@ -423,13 +520,21 @@ DataWidget({
         });
       }
 
-      // Altitude simulée
       this.state.currentAltitude = 1000 + Math.random() * 100;
+      this.state.currentSpeed = 25 + Math.random() * 20;
 
       this.updateFeedback(mockVSpeed);
     } else {
       this.fetchRealData();
     }
+
+    this.detectFlightState();
+
+    if (this.state.flightState === "FLYING") {
+      this.updateFlightDuration();
+    }
+
+    this.updateAltitudeDisplay();
 
     this.state.monitoringInterval = setTimeout(() => {
       this.monitoringLoop();
@@ -447,36 +552,14 @@ DataWidget({
   },
 
   fetchRealData() {
-    const fetchTime = Date.now();
-    console.log(`[fetchRealData] >>> START at ${fetchTime}`);
-
-    // Récupérer vitesse verticale
     getSportData({ type: "vertical_speed" }, (callbackResult) => {
-      const callbackTime = Date.now();
-      const { code, data } = callbackResult;
-
-      console.log(`[fetchRealData] Callback after ${callbackTime - fetchTime}ms`);
-
-      if (code === 0) {
+      if (callbackResult.code === 0) {
         try {
-          const parsed = JSON.parse(data);
-          console.log(`[fetchRealData] Raw data: ${data}`);
+          const parsed = JSON.parse(callbackResult.data);
 
           if (parsed && parsed[0] && parsed[0].vertical_speed !== undefined) {
             const rawValue = parseFloat(parsed[0].vertical_speed);
-
-            const vSpeed1 = rawValue / 100;
-            const vSpeed2 = (rawValue - 32768) / 100;
-            const vSpeed3 = rawValue > 32768 ? (rawValue - 65536) / 100 : rawValue / 100;
-
-            console.log("========================================");
-            console.log(`Raw: ${rawValue}`);
-            console.log(`÷100: ${vSpeed1.toFixed(2)}`);
-            console.log(`-32768÷100: ${vSpeed2.toFixed(2)}`);
-            console.log(`Unsigned: ${vSpeed3.toFixed(2)}`);
-            console.log("========================================");
-
-            const vSpeed = vSpeed1;
+            const vSpeed = rawValue / 100;
 
             if (this.state.vSpeedWidget) {
               this.state.vSpeedWidget.setProperty(prop.MORE, {
@@ -484,51 +567,222 @@ DataWidget({
               });
             }
 
-            console.log(`VSpeed: ${vSpeed.toFixed(2)} m/s`);
-
             this.updateFeedback(vSpeed);
           }
         } catch (error) {
-          console.log(`[fetchRealData] Error: ${error}`);
+          console.log(`[fetchRealData] VSpeed error: ${error}`);
         }
-      } else {
-        console.log(`[fetchRealData] Code: ${code}`);
       }
     });
 
-    // Récupérer altitude
     getSportData({ type: "altitude" }, (callbackResult) => {
       if (callbackResult.code === 0) {
         try {
           const parsed = JSON.parse(callbackResult.data);
           if (parsed && parsed[0] && parsed[0].altitude !== undefined) {
             this.state.currentAltitude = parseFloat(parsed[0].altitude);
-            console.log(`[fetchRealData] Altitude: ${this.state.currentAltitude.toFixed(0)}m`);
           }
         } catch (error) {
           console.log(`[fetchRealData] Altitude error: ${error}`);
         }
       }
     });
+
+    getSportData({ type: "speed" }, (callbackResult) => {
+      if (callbackResult.code === 0) {
+        try {
+          const parsed = JSON.parse(callbackResult.data);
+          if (parsed && parsed[0] && parsed[0].speed !== undefined) {
+            this.state.currentSpeed = parseFloat(parsed[0].speed) * 3.6;
+          }
+        } catch (error) {
+          console.log(`[fetchRealData] Speed error: ${error}`);
+        }
+      }
+    });
+  },
+
+  updateAltitudeDisplay() {
+    if (!this.state.altitudeWidget) return;
+
+    const alt = Math.round(this.state.currentAltitude);
+    this.state.altitudeWidget.setProperty(prop.MORE, {
+      text: alt.toString(),
+    });
+
+    if (this.state.flightState === "FLYING") {
+      const gain = this.state.currentAltitude - this.state.takeoffAltitude;
+
+      if (this.state.gainWidget) {
+        const gainColor = gain >= 0 ? 0x00ff00 : 0xff0000;
+        this.state.gainWidget.setProperty(prop.MORE, {
+          text: `${gain >= 0 ? '+' : ''}${Math.round(gain)}m`,
+          color: gainColor,
+        });
+      }
+
+      if (this.state.maxAltWidget) {
+        this.state.maxAltWidget.setProperty(prop.MORE, {
+          text: `${Math.round(this.state.maxAltitude)}m`,
+        });
+      }
+    } else {
+      if (this.state.gainWidget) {
+        this.state.gainWidget.setProperty(prop.MORE, {
+          text: "+0m",
+          color: 0x00ff00,
+        });
+      }
+
+      if (this.state.maxAltWidget) {
+        this.state.maxAltWidget.setProperty(prop.MORE, {
+          text: "0m",
+        });
+      }
+    }
+  },
+
+  detectFlightState() {
+    const currentAlt = this.state.currentAltitude;
+    const vSpeed = this.state.lastVerticalSpeed;
+    const gSpeed = this.state.currentSpeed;
+    const now = Date.now();
+
+    if (this.state.flightState === "WAITING") {
+      if (this.state.takeoffAltitude === 0) {
+        this.state.takeoffAltitude = currentAlt;
+      }
+
+      const altGain = currentAlt - this.state.takeoffAltitude;
+
+      const isRunning = gSpeed > this.config.takeoff.minGroundSpeed;
+      const isClimbing = vSpeed > this.config.takeoff.minVerticalSpeed;
+      const hasGainedAlt = altGain > this.config.takeoff.minAltitudeGain;
+
+      if (isRunning || (isClimbing && hasGainedAlt)) {
+        console.log(
+          `[FlightState] 🚀 TAKEOFF! Speed:${gSpeed.toFixed(1)}km/h VSpeed:${vSpeed.toFixed(1)}m/s Gain:${altGain.toFixed(1)}m`,
+        );
+
+        this.state.flightState = "FLYING";
+        this.state.flightStartTime = now;
+        this.state.takeoffAltitude = currentAlt;
+        this.state.maxAltitude = currentAlt;
+
+        if (this.state.vibrator) {
+          this.executeVibrationPattern(this.config.vibration.patterns.takeoff);
+        }
+        this.flashTakeoff();
+
+        if (this.state.flightStateIndicator) {
+          this.state.flightStateIndicator.setProperty(prop.MORE, {
+            text: "✈️ FLYING",
+            color: 0x00ff00,
+          });
+        }
+      }
+    } else if (this.state.flightState === "FLYING") {
+      if (currentAlt > this.state.maxAltitude) {
+        this.state.maxAltitude = currentAlt;
+      }
+
+      const isSlowSpeed = gSpeed < this.config.landing.maxGroundSpeed;
+      const isNotClimbing =
+        Math.abs(vSpeed) < this.config.landing.maxVerticalSpeed;
+
+      if (isSlowSpeed && isNotClimbing) {
+        if (!this.state.landingDetectionStartTime) {
+          this.state.landingDetectionStartTime = now;
+          this.state.landingDetectionAltitude = currentAlt;
+          console.log("[FlightState] 🛬 Landing detection started...");
+        } else {
+          const detectionDuration = now - this.state.landingDetectionStartTime;
+          const altChange = Math.abs(
+            currentAlt - this.state.landingDetectionAltitude,
+          );
+
+          if (
+            detectionDuration > this.config.landing.confirmationTime &&
+            altChange < this.config.landing.maxAltitudeChange
+          ) {
+            console.log(
+              `[FlightState] 🛬 LANDED! ${(detectionDuration/1000).toFixed(0)}s on ground`,
+            );
+
+            this.state.flightState = "LANDED";
+
+            if (this.state.vibrator) {
+              this.executeVibrationPattern(
+                this.config.vibration.patterns.landing,
+              );
+            }
+
+            if (this.state.flightStateIndicator) {
+              this.state.flightStateIndicator.setProperty(prop.MORE, {
+                text: "🛬 LANDED",
+                color: 0xff8800,
+              });
+            }
+          }
+        }
+      } else {
+        this.state.landingDetectionStartTime = null;
+        this.state.landingDetectionAltitude = null;
+      }
+    }
+  },
+
+  flashTakeoff() {
+    let flashCount = 0;
+    const flashInterval = setInterval(() => {
+      if (flashCount >= 6) {
+        clearInterval(flashInterval);
+        return;
+      }
+
+      if (this.state.leftBar && this.state.rightBar) {
+        const color = flashCount % 2 === 0 ? 0x00ff00 : 0x333333;
+        this.state.leftBar.setProperty(prop.MORE, { color: color });
+        this.state.rightBar.setProperty(prop.MORE, { color: color });
+      }
+
+      flashCount++;
+    }, 150);
+  },
+
+  updateFlightDuration() {
+    if (!this.state.flightStartTime || !this.state.flightDurationWidget) {
+      return;
+    }
+
+    const duration = Date.now() - this.state.flightStartTime;
+    const minutes = Math.floor(duration / 60000);
+    const seconds = Math.floor((duration % 60000) / 1000);
+
+    this.state.flightDurationWidget.setProperty(prop.MORE, {
+      text: `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+    });
   },
 
   updateFeedback(vSpeed) {
-    console.log(`[updateFeedback] ${vSpeed.toFixed(2)} m/s`);
     this.state.lastVerticalSpeed = vSpeed;
 
-    this.detectThermal(vSpeed);
-    this.updateChevrons(vSpeed);
-    this.handleVibration(vSpeed);
-    this.playVariometerSound(vSpeed);
+    if (this.state.flightState === "FLYING") {
+      this.detectThermal(vSpeed);
+      this.updateChevrons(vSpeed);
+      this.handleVibration(vSpeed);
+      this.playVariometerSound(vSpeed);
+    } else {
+      this.updateChevrons(0);
+    }
   },
 
   detectThermal(vSpeed) {
     const now = Date.now();
 
     if (!this.state.inThermal) {
-      // Pas dans un thermique, chercher l'entrée
       if (vSpeed >= this.config.thermal.minClimbRate) {
-        console.log("[detectThermal] ✅ ENTERING THERMAL");
+        console.log("[Thermal] ✅ ENTERING");
         this.state.inThermal = true;
         this.state.thermalStartTime = now;
         this.state.thermalStartAltitude = this.state.currentAltitude;
@@ -540,29 +794,30 @@ DataWidget({
           samples: [vSpeed],
         };
 
-        // Vibration d'entrée en thermique
         if (this.state.vibrator) {
-          this.executeVibrationPattern(this.config.vibration.patterns.thermalEntry);
+          this.executeVibrationPattern(
+            this.config.vibration.patterns.thermalEntry,
+          );
         }
-
-        // Flash visuel
         this.flashThermalEntry();
       }
     } else {
-      // Dans un thermique
       if (vSpeed < this.config.thermal.exitClimbRate) {
-        // Sortie du thermique
         const duration = now - this.state.thermalStartTime;
-        const altitudeGain = this.state.currentAltitude - this.state.thermalStartAltitude;
+        const altitudeGain =
+          this.state.currentAltitude - this.state.thermalStartAltitude;
 
-        console.log(`[detectThermal] ❌ EXITING THERMAL - Duration: ${(duration/1000).toFixed(1)}s, Gain: ${altitudeGain.toFixed(0)}m`);
+        console.log(
+          `[Thermal] ❌ EXITING - ${(duration/1000).toFixed(1)}s, +${altitudeGain.toFixed(0)}m`,
+        );
 
-        // Vérifier si c'est un vrai thermique
-        if (duration >= this.config.thermal.minDuration &&
-            altitudeGain >= this.config.thermal.minAltitudeGain) {
-
+        if (
+          duration >= this.config.thermal.minDuration &&
+          altitudeGain >= this.config.thermal.minAltitudeGain
+        ) {
           const samples = this.state.currentThermal.samples;
-          const avgClimbRate = samples.reduce((a, b) => a + b, 0) / samples.length;
+          const avgClimbRate =
+            samples.reduce((a, b) => a + b, 0) / samples.length;
 
           const thermal = {
             startTime: this.state.thermalStartTime,
@@ -576,33 +831,26 @@ DataWidget({
           };
 
           this.state.thermalHistory.push(thermal);
+          console.log(`[Thermal] 🌀 SAVED +${altitudeGain.toFixed(0)}m`);
 
-          console.log(`[detectThermal] 🌀 THERMAL SAVED: +${altitudeGain.toFixed(0)}m, avg ${avgClimbRate.toFixed(1)} m/s`);
-
-          // Garder les 10 derniers
           if (this.state.thermalHistory.length > 10) {
             this.state.thermalHistory.shift();
           }
 
-          // Mettre à jour les stats
-          this.updateThermalStats();
-        } else {
-          console.log("[detectThermal] ⚠️ Not a valid thermal (too short or too weak)");
+          this.updateThermalCount();
         }
 
         this.state.inThermal = false;
         this.state.currentThermal = null;
       } else {
-        // Toujours dans le thermique
         this.state.currentThermal.samples.push(vSpeed);
         this.state.currentThermal.maxClimbRate = Math.max(
-            this.state.currentThermal.maxClimbRate,
-            vSpeed
+          this.state.currentThermal.maxClimbRate,
+          vSpeed,
         );
       }
     }
 
-    // Mettre à jour l'indicateur
     this.updateThermalIndicator();
   },
 
@@ -614,7 +862,7 @@ DataWidget({
       const gain = this.state.currentAltitude - this.state.thermalStartAltitude;
 
       this.state.thermalIndicator.setProperty(prop.MORE, {
-        text: `🌀 THERMALn+${gain.toFixed(0)}mn${duration.toFixed(0)}s`,
+        text: `🌀 THERMALn+${gain.toFixed(0)}m  ${duration.toFixed(0)}s`,
         color: 0x00ff00,
       });
     } else {
@@ -624,21 +872,19 @@ DataWidget({
     }
   },
 
-  updateThermalStats() {
-    if (!this.state.statsWidget) return;
+  updateThermalCount() {
+    if (!this.state.thermalCountWidget) return;
 
-    if (this.state.thermalHistory.length === 0) {
-      this.state.statsWidget.setProperty(prop.MORE, {
-        text: "Thermals: 0",
-      });
-      return;
-    }
+    const count = this.state.thermalHistory.length;
+    const text =
+      count === 0
+        ? "0 thermals"
+        : count === 1
+          ? "1 thermal"
+          : `${count} thermals`;
 
-    const totalGain = this.state.thermalHistory.reduce((sum, t) => sum + t.altitudeGain, 0);
-    const avgGain = totalGain / this.state.thermalHistory.length;
-
-    this.state.statsWidget.setProperty(prop.MORE, {
-      text: `Thermals: ${this.state.thermalHistory.length}nAvg: +${avgGain.toFixed(0)}m`,
+    this.state.thermalCountWidget.setProperty(prop.MORE, {
+      text: text,
     });
   },
 
@@ -660,45 +906,8 @@ DataWidget({
     }, 150);
   },
 
-  showThermalHistory() {
-    console.log("n=== 🌀 THERMAL HISTORY ===");
-
-    if (this.state.thermalHistory.length === 0) {
-      console.log("No thermals detected yet");
-      console.log("=========================n");
-      return;
-    }
-
-    this.state.thermalHistory.forEach((thermal, index) => {
-      const date = new Date(thermal.startTime);
-      const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-
-      console.log(`nThermal #${index + 1} at ${timeStr}:`);
-      console.log(`  Duration: ${(thermal.duration / 1000).toFixed(0)}s`);
-      console.log(`  Altitude: ${thermal.startAltitude.toFixed(0)}m → ${thermal.endAltitude.toFixed(0)}m`);
-      console.log(`  Gain: +${thermal.altitudeGain.toFixed(0)}m`);
-      console.log(`  Avg climb: ${thermal.averageClimbRate.toFixed(1)} m/s`);
-      console.log(`  Max climb: ${thermal.maxClimbRate.toFixed(1)} m/s`);
-    });
-
-    const totalGain = this.state.thermalHistory.reduce((sum, t) => sum + t.altitudeGain, 0);
-    const avgGain = totalGain / this.state.thermalHistory.length;
-    const totalDuration = this.state.thermalHistory.reduce((sum, t) => sum + t.duration, 0) / 1000;
-
-    console.log(`n📊 STATISTICS:`);
-    console.log(`  Total thermals: ${this.state.thermalHistory.length}`);
-    console.log(`  Total gain: +${totalGain.toFixed(0)}m`);
-    console.log(`  Average gain: +${avgGain.toFixed(0)}m`);
-    console.log(`  Total time in thermals: ${totalDuration.toFixed(0)}s`);
-
-    console.log("n=========================n");
-  },
-
   updateChevrons(vSpeed) {
-    if (!this.state.chevrons) {
-      console.log("[updateChevrons] No chevrons");
-      return;
-    }
+    if (!this.state.chevrons) return;
 
     if (vSpeed > this.config.deadband) {
       const intensity = Math.min(Math.abs(vSpeed) / 3.0, 1.0);
@@ -717,7 +926,7 @@ DataWidget({
       this.state.chevrons.forEach((chevron, i) => {
         chevron.setProperty(prop.MORE, {
           src: "chevron_down.png",
-          alpha: (2 - i) < numChevrons ? 255 : 50,
+          alpha: 2 - i < numChevrons ? 255 : 50,
         });
       });
     } else {
@@ -737,7 +946,7 @@ DataWidget({
       const offset = Math.sin((this.state.animationPhase * Math.PI) / 5) * 5;
 
       this.state.chevrons.forEach((chevron, i) => {
-        let baseY = 80 + i * 30;
+        let baseY = 150 + i * 30;
 
         if (vSpeed > this.config.deadband) {
           chevron.setProperty(prop.MORE, { y: baseY - Math.abs(offset) });
@@ -748,8 +957,7 @@ DataWidget({
     }
 
     if (this.state.leftBar && this.state.rightBar) {
-      // Ne pas animer si flash thermique en cours
-      if (this.state.inThermal) return;
+      if (this.state.flightState !== "FLYING" || this.state.inThermal) return;
 
       let barColor = 0x333333;
       let barHeight = 480;
@@ -825,11 +1033,6 @@ DataWidget({
 
   onDestroy() {
     console.log("=== LIFECYCLE: onDestroy ===");
-
-    // Afficher un résumé final
-    if (this.state.thermalHistory.length > 0) {
-      this.showThermalHistory();
-    }
 
     this.state.isActive = false;
     this.state.monitoringActive = false;
@@ -930,13 +1133,13 @@ DataWidget({
     if (count > 1) {
       for (let i = 1; i < count; i++) {
         setTimeout(
-            () => {
-              this.state.vibrator.start();
-              setTimeout(() => {
-                this.state.vibrator.stop();
-              }, duration);
-            },
-            i * (duration + gap),
+          () => {
+            this.state.vibrator.start();
+            setTimeout(() => {
+              this.state.vibrator.stop();
+            }, duration);
+          },
+          i * (duration + gap),
         );
       }
     }
@@ -976,8 +1179,6 @@ DataWidget({
     if (soundFile && soundFile !== this.state.currentSound) {
       this.state.currentSound = soundFile;
       const fullPath = `raw/media/${soundFile}`;
-
-      console.log(`[playVariometerSound] Playing: ${fullPath}`);
 
       try {
         this.state.player.play(fullPath);
