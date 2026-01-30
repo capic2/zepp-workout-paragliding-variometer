@@ -1,5 +1,5 @@
 {
-  "name": "RunningPaceMaster",
+  "name": "ParaVario",
   "version": "1.0.0",
   "description": "",
   "main": "app.js",
@@ -9,7 +9,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@zeppos/device-types": "^3.0.0",
+    "@zeppos/device-types": "3.0.1",
     "prettier": "^3.7.4"
   },
   "dependencies": {
