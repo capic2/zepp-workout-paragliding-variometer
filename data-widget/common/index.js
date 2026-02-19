@@ -6,27 +6,28 @@ import {
   sport_data,
   edit_widget_group_type,
   prop,
+  event,
 } from "@zos/ui";
 import { getSportData } from "@zos/app-access";
-import { SoundPlayer } from "@silver-zepp/easy-media";
-import { Vibrator } from "@zos/sensor";
-import { Accelerometer } from "@zos/sensor";
+import { Vibrator, Accelerometer } from "@zos/sensor";
 import {
   pauseDropWristScreenOff,
   pausePalmScreenOff,
   setWakeUpRelaunch,
 } from "@zos/display";
-import { log } from "@zos/utils";
+import { create, id } from "@zos/media";
+
+const globalNativePlayer = create(id.PLAYER);
 
 DataWidget({
   state: {
-    logger: null,
     animationInterval: null,
     monitoringInterval: null,
     monitoringActive: false,
     isActive: false,
     isSimulation: false,
-    player: null,
+    isTestMode: false,
+    testVSpeed: 0,
     vibrator: null,
     accelerometer: null,
     currentSound: null,
@@ -44,13 +45,11 @@ DataWidget({
 
     flightState: "WAITING",
     takeoffAltitude: 0,
-    takeoffTime: null,
     landingDetectionStartTime: null,
     landingDetectionAltitude: null,
 
     flightStartTime: null,
     maxAltitude: 0,
-    maxAltitudeGain: 0,
 
     thermalHistory: [],
     currentThermal: null,
@@ -58,12 +57,28 @@ DataWidget({
     thermalStartTime: null,
     inThermal: false,
     thermalIndicator: null,
+    thermalCountWidget: null,
+
+    // Accéléromètre : composante verticale pour déterminer le signe de vSpeed
+    verticalAccelZ: null,
+    accelBaselineZ: null,
 
     flightStateIndicator: null,
     flightDurationWidget: null,
     altitudeWidget: null,
     gainWidget: null,
     maxAltWidget: null,
+
+    // Widgets mode test
+    testPanel: null,
+    testButtonClimb: null,
+    testButtonSink: null,
+    testButtonSound: null,
+    testButtonVibration: null,
+    testTitle: null,
+    testInstruction: null,
+    testButtonReset: null,
+    _testPanelListenersAdded: false,
   },
 
   config: {
@@ -111,14 +126,8 @@ DataWidget({
         thermalEntry: { duration: 200, count: 3, gap: 100, interval: 0 },
         takeoff: { duration: 300, count: 3, gap: 200, interval: 0 },
         landing: { duration: 500, count: 2, gap: 300, interval: 0 },
+        test: { duration: 200, count: 2, gap: 100, interval: 0 },
       },
-    },
-
-    colors: {
-      neutral: 0x000000,
-      waiting: 0xffff00,
-      flying: 0x00ff00,
-      landed: 0xff8800,
     },
 
     climb: [
@@ -139,15 +148,17 @@ DataWidget({
   },
 
   onInit() {
-    this.state.logger = log.getLogger("ParaVario");
     console.log("=== LIFECYCLE: onInit ===");
   },
 
   build() {
-    if (!this.state.logger) {
-      this.state.logger = log.getLogger("ParaVario");
-    }
     console.log("=== LIFECYCLE: build START ===");
+
+    if (globalNativePlayer) {
+      console.log("[build] ✅ Native player available");
+    } else {
+      console.log("[build] ⚠️ Native player not available");
+    }
 
     try {
       pauseDropWristScreenOff({ duration: 0 });
@@ -287,14 +298,14 @@ DataWidget({
     this.state.chevrons = [];
     for (let i = 0; i < 3; i++) {
       this.state.chevrons.push(
-          createWidget(widget.IMG, {
-            x: 220,
-            y: 150 + i * 30,
-            w: 40,
-            h: 40,
-            src: "chevron_neutral.png",
-            alpha: 100,
-          }),
+        createWidget(widget.IMG, {
+          x: 220,
+          y: 150 + i * 30,
+          w: 40,
+          h: 40,
+          src: "chevron_neutral.png",
+          alpha: 100,
+        }),
       );
     }
 
@@ -401,51 +412,352 @@ DataWidget({
       align_h: align.CENTER_H,
     });
 
-    this.initAudioPlayer();
+    const touchArea = createWidget(widget.FILL_RECT, {
+      x: 0,
+      y: 0,
+      w: 480,
+      h: 480,
+      color: 0x000000,
+      alpha: 0,
+    });
+
+    let touchStartTime = 0;
+
+    touchArea.addEventListener(event.CLICK_DOWN, () => {
+      touchStartTime = Date.now();
+      console.log("[Touch] Down");
+    });
+
+    touchArea.addEventListener(event.CLICK_UP, () => {
+      const touchDuration = Date.now() - touchStartTime;
+      console.log(`[Touch] Up - Duration: ${touchDuration}ms`);
+
+      if (touchDuration > 2000) {
+        console.log("[TEST] Long press detected - Entering test mode");
+        this.enterTestMode();
+      }
+    });
+
+    this.buildTestPanel();
+
+    this.initNativeAudioPlayer();
     this.initVibrator();
     this.initAccelerometer();
 
     console.log("=== LIFECYCLE: build END ===");
 
-    // a supprimer
-    const fullPath = `raw/media/climb-_5.mp3`;
-    console.log(`[Audio] 🔊 Playing: ${fullPath}`);
-    this.state.player.play(fullPath);
-
     this.detectAndStart();
   },
 
-  initAudioPlayer() {
-    try {
-      console.log("[initAudioPlayer] START");
-      this.state.player = new SoundPlayer();
-      this.state.player.set.volume(100);
-      console.log("[initAudioPlayer] Volume set to 100");
+  buildTestPanel() {
+    this.state.testPanel = createWidget(widget.FILL_RECT, {
+      x: 0,
+      y: 0,
+      w: 480,
+      h: 480,
+      color: 0x222222,
+    });
+    this.state.testPanel.setProperty(prop.VISIBLE, false);
 
-      this.state.player.onComplete((info) => {
-        console.log(`[Audio] ✅ Completed: ${info.name || 'unknown'}`);
+    this.state.testTitle = createWidget(widget.TEXT, {
+      x: 0,
+      y: 30,
+      w: 480,
+      h: 40,
+      text: "🧪 MODE TEST",
+      text_size: 28,
+      color: 0xffff00,
+      align_h: align.CENTER_H,
+    });
+    this.state.testTitle.setProperty(prop.VISIBLE, false);
 
-        if (
-            this.state.isActive &&
-            this.state.flightState === "FLYING" &&
-            Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
-        ) {
-          console.log("[Audio] 🔄 Will restart in 50ms");
-          setTimeout(() => {
-            if (this.state.isActive) {
-              this.playVariometerSound(this.state.lastVerticalSpeed);
-            }
-          }, 50);
-        } else {
-          console.log("[Audio] ⏸️ Not restarting (inactive or in deadband)");
+    this.state.testInstruction = createWidget(widget.TEXT, {
+      x: 0,
+      y: 420,
+      w: 480,
+      h: 30,
+      text: "Appui long pour quitter",
+      text_size: 14,
+      color: 0x888888,
+      align_h: align.CENTER_H,
+    });
+    this.state.testInstruction.setProperty(prop.VISIBLE, false);
+
+    // Bouton CLIMB +2m/s
+    this.state.testButtonClimb = createWidget(widget.BUTTON, {
+      x: 40,
+      y: 100,
+      w: 180,
+      h: 80,
+      radius: 15,
+      normal_color: 0x00aa00,
+      press_color: 0x008800,
+      text: "⬆️ CLIMB\n+2.0 m/s",
+      text_size: 20,
+      click_func: () => {
+        console.log("[TEST] Simulating CLIMB +2.0m/s");
+        this.testVSpeed(2.0);
+      },
+    });
+    this.state.testButtonClimb.setProperty(prop.VISIBLE, false);
+
+    // Bouton SINK -2m/s
+    this.state.testButtonSink = createWidget(widget.BUTTON, {
+      x: 260,
+      y: 100,
+      w: 180,
+      h: 80,
+      radius: 15,
+      normal_color: 0xaa0000,
+      press_color: 0x880000,
+      text: "⬇️ SINK\n-2.0 m/s",
+      text_size: 20,
+      click_func: () => {
+        console.log("[TEST] Simulating SINK -2.0m/s");
+        this.testVSpeed(-2.0);
+      },
+    });
+    this.state.testButtonSink.setProperty(prop.VISIBLE, false);
+
+    // Bouton TEST SOUND
+    this.state.testButtonSound = createWidget(widget.BUTTON, {
+      x: 40,
+      y: 200,
+      w: 180,
+      h: 80,
+      radius: 15,
+      normal_color: 0x0000aa,
+      press_color: 0x000088,
+      text: "🔊 SOUND\nClimb 3",
+      text_size: 20,
+      click_func: () => {
+        this.testSound();
+      },
+    });
+    this.state.testButtonSound.setProperty(prop.VISIBLE, false);
+
+    // Bouton TEST VIBRATION
+    this.state.testButtonVibration = createWidget(widget.BUTTON, {
+      x: 260,
+      y: 200,
+      w: 180,
+      h: 80,
+      radius: 15,
+      normal_color: 0xaa00aa,
+      press_color: 0x880088,
+      text: "📳 VIBRATE\nTest",
+      text_size: 20,
+      click_func: () => {
+        console.log("[TEST] Testing vibration");
+        this.testVibration();
+      },
+    });
+    this.state.testButtonVibration.setProperty(prop.VISIBLE, false);
+
+    // Bouton RESET
+    this.state.testButtonReset = createWidget(widget.BUTTON, {
+      x: 140,
+      y: 300,
+      w: 200,
+      h: 60,
+      radius: 15,
+      normal_color: 0x555555,
+      press_color: 0x777777,
+      text: "🔄 RESET\n0 m/s",
+      text_size: 18,
+      click_func: () => {
+        console.log("[TEST] Reset to 0 m/s");
+        this.testVSpeed(0);
+      },
+    });
+    this.state.testButtonReset.setProperty(prop.VISIBLE, false);
+  },
+
+  enterTestMode() {
+    if (this.state.isTestMode) return; // garde contre les appels multiples
+
+    this.state.isTestMode = true;
+    this.state.testVSpeed = 0;
+
+    this.state.testPanel.setProperty(prop.VISIBLE, true);
+    this.state.testTitle.setProperty(prop.VISIBLE, true);
+    this.state.testInstruction.setProperty(prop.VISIBLE, true);
+    this.state.testButtonClimb.setProperty(prop.VISIBLE, true);
+    this.state.testButtonSink.setProperty(prop.VISIBLE, true);
+    this.state.testButtonSound.setProperty(prop.VISIBLE, true);
+    this.state.testButtonVibration.setProperty(prop.VISIBLE, true);
+    this.state.testButtonReset.setProperty(prop.VISIBLE, true);
+
+    // Les listeners ne sont enregistrés qu'une seule fois (lors du premier appel)
+    if (!this.state._testPanelListenersAdded) {
+      let touchStartTime = 0;
+
+      this.state.testPanel.addEventListener(event.CLICK_DOWN, () => {
+        touchStartTime = Date.now();
+        console.log("[TEST] Panel touch down");
+      });
+
+      this.state.testPanel.addEventListener(event.CLICK_UP, () => {
+        const touchDuration = Date.now() - touchStartTime;
+        console.log(`[TEST] Panel touch up - Duration: ${touchDuration}ms`);
+
+        if (touchDuration > 2000) {
+          console.log("[TEST] Long press detected - Exiting test mode");
+          this.exitTestMode();
         }
       });
 
-      this.state.player.onFail((info) => {
-        console.log(`[Audio] ❌ FAILED: ${info.name || 'unknown'} - ${info.error || 'no error'}`);
-      });
+      this.state._testPanelListenersAdded = true;
+    }
 
-      console.log("[initAudioPlayer] ✅ OK");
+    console.log("[TEST] Test mode ACTIVATED");
+  },
+
+  exitTestMode() {
+    this.state.isTestMode = false;
+    this.state.testVSpeed = 0;
+
+    this.state.testPanel.setProperty(prop.VISIBLE, false);
+    this.state.testTitle.setProperty(prop.VISIBLE, false);
+    this.state.testInstruction.setProperty(prop.VISIBLE, false);
+    this.state.testButtonClimb.setProperty(prop.VISIBLE, false);
+    this.state.testButtonSink.setProperty(prop.VISIBLE, false);
+    this.state.testButtonSound.setProperty(prop.VISIBLE, false);
+    this.state.testButtonVibration.setProperty(prop.VISIBLE, false);
+    this.state.testButtonReset.setProperty(prop.VISIBLE, false);
+
+    // ✅ CORRIGER pour utiliser globalNativePlayer
+    if (globalNativePlayer) {
+      try {
+        const status = globalNativePlayer.getStatus();
+        if (status === globalNativePlayer.state.PLAY) {
+          globalNativePlayer.stop();
+        }
+      } catch (e) {
+        console.log(`[exitTestMode] Stop error: ${e}`);
+      }
+    }
+
+    console.log("[TEST] Test mode DEACTIVATED");
+  },
+
+  testVSpeed(vSpeed) {
+    this.state.testVSpeed = vSpeed;
+    this.state.lastVerticalSpeed = vSpeed;
+
+    if (this.state.vSpeedWidget) {
+      this.state.vSpeedWidget.setProperty(prop.MORE, {
+        text: vSpeed.toFixed(2),
+      });
+    }
+
+    this.updateChevrons(vSpeed);
+    this.updateAnimations();
+    this.playVariometerSound(vSpeed);
+
+    console.log(`[TEST] VSpeed set to: ${vSpeed.toFixed(2)} m/s`);
+  },
+
+  testSound() {
+    if (!globalNativePlayer) {
+      console.log("[TEST] ❌ No player available");
+      return;
+    }
+
+    // Forcer testVSpeed à une valeur positive pour que la boucle de monitoring
+    // ne stoppe pas le son (deadband = 0.2, 0 < 0.2 → stop immédiat sinon)
+    this.state.testVSpeed = 2.0;
+    this.state.lastVerticalSpeed = 2.0;
+    this.state.currentSound = null; // forcer la relecture même si même fichier
+
+    console.log("[TEST] 🔊 Playing test sound via playVariometerSound(2.0)");
+    this.playVariometerSound(2.0);
+  },
+
+  testVibration() {
+    if (!this.state.vibrator) {
+      console.log("[TEST] ❌ No vibrator available");
+      return;
+    }
+
+    console.log("[TEST] 📳 Testing vibration");
+    this.executeVibrationPattern(this.config.vibration.patterns.test);
+    console.log("[TEST] ✅ Vibration test done");
+  },
+
+  initNativeAudioPlayer() {
+    try {
+      console.log("[initNativeAudioPlayer] START");
+
+      if (!globalNativePlayer) {
+        console.log("[initNativeAudioPlayer] ❌ No native player");
+        return;
+      }
+
+      globalNativePlayer.setVolume(100);
+      console.log("[initNativeAudioPlayer] Volume set to 100");
+
+      // ✅ UTILISER ARROW FUNCTIONS
+      globalNativePlayer.addEventListener(
+        globalNativePlayer.event.PREPARE,
+        (result) => {
+          if (result) {
+            console.log("[NativeAudio] ✅ Prepare success");
+            globalNativePlayer.start();
+          } else {
+            console.log("[NativeAudio] ❌ Prepare fail");
+            // Réinitialiser pour permettre une nouvelle tentative
+            this.state.currentSound = null;
+          }
+        },
+      );
+
+      globalNativePlayer.addEventListener(
+        globalNativePlayer.event.COMPLETE,
+        () => {
+          console.log("[NativeAudio] ✅ Complete - Audio finished");
+
+          // Réinitialiser currentSound pour permettre la relance du même fichier
+          this.state.currentSound = null;
+
+          // Relancer le son si toujours en vol ou en mode test, hors deadband
+          if (
+            this.state.isActive &&
+            (this.state.flightState === "FLYING" || this.state.isTestMode) &&
+            Math.abs(this.state.lastVerticalSpeed) > this.config.deadband
+          ) {
+            console.log("[NativeAudio] 🔄 Will restart in 50ms");
+            setTimeout(() => {
+              if (this.state.isActive) {
+                this.playVariometerSound(this.state.lastVerticalSpeed);
+              }
+            }, 50);
+          }
+        },
+      );
+
+      // ✅ AJOUTER événement ERROR
+      globalNativePlayer.addEventListener(
+        globalNativePlayer.event.PLAY,
+        (result) => {
+          if (result) {
+            console.log("[NativeAudio] ✅ PLAY started successfully");
+          } else {
+            console.log(
+              "[NativeAudio] ❌ PLAY failed (start() returned false)",
+            );
+          }
+        },
+      );
+
+      globalNativePlayer.addEventListener(
+        globalNativePlayer.event.ERROR,
+        (error) => {
+          console.log(`[NativeAudio] ❌ Error: ${error}`);
+        },
+      );
+
+      console.log("[initNativeAudioPlayer] ✅ OK");
     } catch (error) {
       console.log(`[initAudioPlayer] ❌ Error: ${error}`);
     }
@@ -466,11 +778,20 @@ DataWidget({
       console.log("[initAccelerometer] Start");
       this.state.accelerometer = new Accelerometer();
 
+      // Alpha très faible : la baseline suit lentement la composante statique de gravité.
+      // La différence (data.z - baseline) représente uniquement l'accélération dynamique :
+      //   > 0 → montée   < 0 → descente
+      const BASELINE_ALPHA = 0.02;
+
       this.state.accelerometer.onChange((data) => {
-        // data.z représente l'accélération verticale
-        // On peut l'utiliser pour confirmer le sens de la vitesse verticale
-        // Positif = montée, Négatif = descente
-        // console.log(`[Accel] z=${data.z.toFixed(2)}`);
+        if (this.state.accelBaselineZ === null) {
+          this.state.accelBaselineZ = data.z;
+        } else {
+          this.state.accelBaselineZ =
+            this.state.accelBaselineZ * (1 - BASELINE_ALPHA) +
+            data.z * BASELINE_ALPHA;
+        }
+        this.state.verticalAccelZ = data.z - this.state.accelBaselineZ;
       });
 
       this.state.accelerometer.start();
@@ -489,10 +810,10 @@ DataWidget({
     console.log("[detectAndStart] ⏸️ Waiting for takeoff...");
 
     const testResult = getSportData(
-        { type: "vertical_speed" },
-        (callbackResult) => {
-          console.log(`[detectAndStart] Callback: code=${callbackResult.code}`);
-        },
+      { type: "vertical_speed" },
+      (callbackResult) => {
+        console.log(`[detectAndStart] Callback: code=${callbackResult.code}`);
+      },
     );
 
     console.log(`[detectAndStart] Result: ${testResult}`);
@@ -528,12 +849,25 @@ DataWidget({
   monitoringLoop() {
     if (!this.state.monitoringActive || !this.state.isActive) {
       console.log(
-          `[monitoringLoop] STOP (active=${this.state.monitoringActive})`,
+        `[monitoringLoop] STOP (active=${this.state.monitoringActive})`,
       );
       return;
     }
 
-    if (this.state.isSimulation) {
+    // Mode TEST : utiliser testVSpeed
+    if (this.state.isTestMode) {
+      const vSpeed = this.state.testVSpeed;
+
+      if (this.state.vSpeedWidget) {
+        this.state.vSpeedWidget.setProperty(prop.MORE, {
+          text: vSpeed.toFixed(2),
+        });
+      }
+
+      this.updateFeedback(vSpeed);
+    }
+    // Mode SIMULATION
+    else if (this.state.isSimulation) {
       const mockVSpeed = (Math.random() - 0.5) * 8;
 
       if (this.state.vSpeedWidget) {
@@ -543,20 +877,26 @@ DataWidget({
       }
 
       this.state.currentAltitude = 1000 + Math.random() * 100;
-      this.state.currentSpeed = 25 + Math.random() * 20;
+      // Vitesse sol faible pour ne pas déclencher le TAKEOFF automatiquement
+      // (seuil minGroundSpeed = 10 km/h)
+      this.state.currentSpeed = 3 + Math.random() * 5;
 
       this.updateFeedback(mockVSpeed);
-    } else {
+    }
+    // Mode RÉEL
+    else {
       this.fetchRealData();
     }
 
-    this.detectFlightState();
+    if (!this.state.isTestMode) {
+      this.detectFlightState();
 
-    if (this.state.flightState === "FLYING") {
-      this.updateFlightDuration();
+      if (this.state.flightState === "FLYING") {
+        this.updateFlightDuration();
+      }
+
+      this.updateAltitudeDisplay();
     }
-
-    this.updateAltitudeDisplay();
 
     this.state.monitoringInterval = setTimeout(() => {
       this.monitoringLoop();
@@ -574,7 +914,6 @@ DataWidget({
   },
 
   fetchRealData() {
-    // Récupérer la vitesse verticale (API donne en m/h)
     getSportData({ type: "vertical_speed" }, (callbackResult) => {
       if (callbackResult.code === 0) {
         try {
@@ -584,19 +923,27 @@ DataWidget({
             const vSpeedMeterPerHour = parseFloat(parsed[0].vertical_speed);
             const vSpeedMeterPerSecond = vSpeedMeterPerHour / 3600;
 
-            // Calculer le sens avec l'historique d'altitude
             let vSpeedWithSign = vSpeedMeterPerSecond;
 
-            if (this.state.lastAltitude !== 0) {
-              const altDiff = this.state.currentAltitude - this.state.lastAltitude;
-              if (altDiff < 0) {
-                vSpeedWithSign = -Math.abs(vSpeedMeterPerSecond);
-              } else {
-                vSpeedWithSign = Math.abs(vSpeedMeterPerSecond);
-              }
+            if (this.state.verticalAccelZ !== null) {
+              // Signe déterminé par l'accéléromètre (plus réactif que l'altitude)
+              vSpeedWithSign =
+                this.state.verticalAccelZ >= 0
+                  ? Math.abs(vSpeedMeterPerSecond)
+                  : -Math.abs(vSpeedMeterPerSecond);
+            } else if (this.state.lastAltitude !== 0) {
+              // Fallback : delta d'altitude
+              const altDiff =
+                this.state.currentAltitude - this.state.lastAltitude;
+              vSpeedWithSign =
+                altDiff < 0
+                  ? -Math.abs(vSpeedMeterPerSecond)
+                  : Math.abs(vSpeedMeterPerSecond);
             }
 
-            console.log(`[VSpeed] Raw=${vSpeedMeterPerHour.toFixed(0)}m/h Final=${vSpeedWithSign.toFixed(2)}m/s`);
+            console.log(
+              `[VSpeed] Raw=${vSpeedMeterPerHour.toFixed(0)}m/h Final=${vSpeedWithSign.toFixed(2)}m/s`,
+            );
 
             if (this.state.vSpeedWidget) {
               this.state.vSpeedWidget.setProperty(prop.MORE, {
@@ -612,7 +959,6 @@ DataWidget({
       }
     });
 
-    // Récupérer l'altitude
     getSportData({ type: "altitude" }, (callbackResult) => {
       if (callbackResult.code === 0) {
         try {
@@ -621,7 +967,6 @@ DataWidget({
             this.state.lastAltitude = this.state.currentAltitude;
             this.state.currentAltitude = parseFloat(parsed[0].altitude);
 
-            // Garder un historique des 5 dernières altitudes
             this.state.altitudeHistory.push(this.state.currentAltitude);
             if (this.state.altitudeHistory.length > 5) {
               this.state.altitudeHistory.shift();
@@ -633,7 +978,6 @@ DataWidget({
       }
     });
 
-    // Récupérer la vitesse sol
     getSportData({ type: "speed" }, (callbackResult) => {
       if (callbackResult.code === 0) {
         try {
@@ -662,7 +1006,7 @@ DataWidget({
       if (this.state.gainWidget) {
         const gainColor = gain >= 0 ? 0x00ff00 : 0xff0000;
         this.state.gainWidget.setProperty(prop.MORE, {
-          text: `${gain >= 0 ? '+' : ''}${Math.round(gain)}m`,
+          text: `${gain >= 0 ? "+" : ""}${Math.round(gain)}m`,
           color: gainColor,
         });
       }
@@ -707,7 +1051,7 @@ DataWidget({
 
       if (isRunning || (isClimbing && hasGainedAlt)) {
         console.log(
-            `[FlightState] 🚀 TAKEOFF! Speed:${gSpeed.toFixed(1)}km/h VSpeed:${vSpeed.toFixed(1)}m/s Gain:${altGain.toFixed(1)}m`,
+          `[FlightState] 🚀 TAKEOFF! Speed:${gSpeed.toFixed(1)}km/h VSpeed:${vSpeed.toFixed(1)}m/s Gain:${altGain.toFixed(1)}m`,
         );
 
         this.state.flightState = "FLYING";
@@ -734,7 +1078,7 @@ DataWidget({
 
       const isSlowSpeed = gSpeed < this.config.landing.maxGroundSpeed;
       const isNotClimbing =
-          Math.abs(vSpeed) < this.config.landing.maxVerticalSpeed;
+        Math.abs(vSpeed) < this.config.landing.maxVerticalSpeed;
 
       if (isSlowSpeed && isNotClimbing) {
         if (!this.state.landingDetectionStartTime) {
@@ -744,22 +1088,22 @@ DataWidget({
         } else {
           const detectionDuration = now - this.state.landingDetectionStartTime;
           const altChange = Math.abs(
-              currentAlt - this.state.landingDetectionAltitude,
+            currentAlt - this.state.landingDetectionAltitude,
           );
 
           if (
-              detectionDuration > this.config.landing.confirmationTime &&
-              altChange < this.config.landing.maxAltitudeChange
+            detectionDuration > this.config.landing.confirmationTime &&
+            altChange < this.config.landing.maxAltitudeChange
           ) {
             console.log(
-                `[FlightState] 🛬 LANDED! ${(detectionDuration/1000).toFixed(0)}s on ground`,
+              `[FlightState] 🛬 LANDED! ${(detectionDuration / 1000).toFixed(0)}s on ground`,
             );
 
             this.state.flightState = "LANDED";
 
             if (this.state.vibrator) {
               this.executeVibrationPattern(
-                  this.config.vibration.patterns.landing,
+                this.config.vibration.patterns.landing,
               );
             }
 
@@ -806,15 +1150,18 @@ DataWidget({
     const seconds = Math.floor((duration % 60000) / 1000);
 
     this.state.flightDurationWidget.setProperty(prop.MORE, {
-      text: `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+      text: `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
     });
   },
 
   updateFeedback(vSpeed) {
     this.state.lastVerticalSpeed = vSpeed;
 
-    if (this.state.flightState === "FLYING") {
-      this.detectThermal(vSpeed);
+    if (this.state.flightState === "FLYING" || this.state.isTestMode) {
+      if (!this.state.isTestMode) {
+        // detectThermal nécessite une altitude réelle — désactivé en mode test
+        this.detectThermal(vSpeed);
+      }
       this.updateChevrons(vSpeed);
       this.handleVibration(vSpeed);
       this.playVariometerSound(vSpeed);
@@ -842,7 +1189,7 @@ DataWidget({
 
         if (this.state.vibrator) {
           this.executeVibrationPattern(
-              this.config.vibration.patterns.thermalEntry,
+            this.config.vibration.patterns.thermalEntry,
           );
         }
         this.flashThermalEntry();
@@ -851,19 +1198,19 @@ DataWidget({
       if (vSpeed < this.config.thermal.exitClimbRate) {
         const duration = now - this.state.thermalStartTime;
         const altitudeGain =
-            this.state.currentAltitude - this.state.thermalStartAltitude;
+          this.state.currentAltitude - this.state.thermalStartAltitude;
 
         console.log(
-            `[Thermal] ❌ EXITING - ${(duration/1000).toFixed(1)}s, +${altitudeGain.toFixed(0)}m`,
+          `[Thermal] ❌ EXITING - ${(duration / 1000).toFixed(1)}s, +${altitudeGain.toFixed(0)}m`,
         );
 
         if (
-            duration >= this.config.thermal.minDuration &&
-            altitudeGain >= this.config.thermal.minAltitudeGain
+          duration >= this.config.thermal.minDuration &&
+          altitudeGain >= this.config.thermal.minAltitudeGain
         ) {
           const samples = this.state.currentThermal.samples;
           const avgClimbRate =
-              samples.reduce((a, b) => a + b, 0) / samples.length;
+            samples.reduce((a, b) => a + b, 0) / samples.length;
 
           const thermal = {
             startTime: this.state.thermalStartTime,
@@ -891,8 +1238,8 @@ DataWidget({
       } else {
         this.state.currentThermal.samples.push(vSpeed);
         this.state.currentThermal.maxClimbRate = Math.max(
-            this.state.currentThermal.maxClimbRate,
-            vSpeed,
+          this.state.currentThermal.maxClimbRate,
+          vSpeed,
         );
       }
     }
@@ -923,11 +1270,11 @@ DataWidget({
 
     const count = this.state.thermalHistory.length;
     const text =
-        count === 0
-            ? "0 thermals"
-            : count === 1
-                ? "1 thermal"
-                : `${count} thermals`;
+      count === 0
+        ? "0 thermals"
+        : count === 1
+          ? "1 thermal"
+          : `${count} thermals`;
 
     this.state.thermalCountWidget.setProperty(prop.MORE, {
       text: text,
@@ -1003,7 +1350,8 @@ DataWidget({
     }
 
     if (this.state.leftBar && this.state.rightBar) {
-      if (this.state.flightState !== "FLYING" || this.state.inThermal) return;
+      if (this.state.flightState !== "FLYING" && !this.state.isTestMode) return;
+      if (this.state.inThermal) return;
 
       let barColor = 0x333333;
       let barHeight = 480;
@@ -1094,8 +1442,8 @@ DataWidget({
     this.stopMonitoring();
     this.stopAnimation();
 
-    if (this.state.player) {
-      this.state.player.destroy();
+    if (globalNativePlayer) {
+      globalNativePlayer.release();
     }
 
     if (this.state.vibrator) {
@@ -1191,42 +1539,44 @@ DataWidget({
     if (count > 1) {
       for (let i = 1; i < count; i++) {
         setTimeout(
-            () => {
-              this.state.vibrator.start();
-              setTimeout(() => {
-                this.state.vibrator.stop();
-              }, duration);
-            },
-            i * (duration + gap),
+          () => {
+            this.state.vibrator.start();
+            setTimeout(() => {
+              this.state.vibrator.stop();
+            }, duration);
+          },
+          i * (duration + gap),
         );
       }
     }
   },
 
   playVariometerSound(vSpeed) {
-    if (!this.state.player) {
+    if (!globalNativePlayer) {
       console.log("[Audio] ❌ No player");
       return;
     }
 
     let soundFile = null;
 
-    // Si dans la zone morte, arrêter le son
     if (Math.abs(vSpeed) < this.config.deadband) {
-      console.log(`[Audio] 🔇 In deadband (${vSpeed.toFixed(2)}m/s < ${this.config.deadband})`);
-      if (this.state.player.get.isPlaying()) {
-        this.state.player.stop();
+      console.log(
+        `[Audio] 🔇 In deadband (${vSpeed.toFixed(2)}m/s < ${this.config.deadband})`,
+      );
+      if (globalNativePlayer.getStatus() === globalNativePlayer.state.PLAY) {
+        globalNativePlayer.stop();
       }
       this.state.currentSound = null;
       return;
     }
 
-    // Sélectionner le son en fonction de la vitesse
     if (vSpeed > 0) {
       for (let i = this.config.climb.length - 1; i >= 0; i--) {
         if (vSpeed >= this.config.climb[i].threshold) {
           soundFile = this.config.climb[i].sound;
-          console.log(`[Audio] 📈 CLIMB: vSpeed=${vSpeed.toFixed(2)} → ${soundFile}`);
+          console.log(
+            `[Audio] 📈 CLIMB: vSpeed=${vSpeed.toFixed(2)} → ${soundFile}`,
+          );
           break;
         }
       }
@@ -1234,13 +1584,14 @@ DataWidget({
       for (let i = this.config.sink.length - 1; i >= 0; i--) {
         if (vSpeed <= this.config.sink[i].threshold) {
           soundFile = this.config.sink[i].sound;
-          console.log(`[Audio] 📉 SINK: vSpeed=${vSpeed.toFixed(2)} → ${soundFile}`);
+          console.log(
+            `[Audio] 📉 SINK: vSpeed=${vSpeed.toFixed(2)} → ${soundFile}`,
+          );
           break;
         }
       }
     }
 
-    // Jouer le son s'il a changé
     if (soundFile && soundFile !== this.state.currentSound) {
       this.state.currentSound = soundFile;
       const fullPath = `raw/media/${soundFile}`;
@@ -1248,16 +1599,25 @@ DataWidget({
       console.log(`[Audio] 🔊 Playing: ${fullPath}`);
 
       try {
-        this.state.player.stop(); // Arrêter le son précédent
-        this.state.player.play(fullPath);
+        const status = globalNativePlayer.getStatus();
+        if (status === globalNativePlayer.state.PLAY) {
+          globalNativePlayer.stop();
+        }
+      } catch (e) {
+        console.log(`[Audio] ⚠️ Stop error (ignored): ${e}`);
+      }
+
+      try {
+        globalNativePlayer.setSource(globalNativePlayer.source.FILE, {
+          file: fullPath,
+        });
+        globalNativePlayer.prepare();
         console.log("[Audio] ✅ Play command sent");
       } catch (error) {
         console.log(`[Audio] ❌ Play error: ${error}`);
       }
     } else if (!soundFile) {
       console.log(`[Audio] ⚠️ No sound file for vSpeed=${vSpeed.toFixed(2)}`);
-    } else {
-      // console.log(`[Audio] ▶️ Already playing: ${soundFile}`);
     }
   },
 });

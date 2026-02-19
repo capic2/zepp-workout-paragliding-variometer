@@ -12,7 +12,5 @@
     "@zeppos/device-types": "3.0.1",
     "prettier": "^3.7.4"
   },
-  "dependencies": {
-    "@silver-zepp/easy-media": "^1.1.5"
-  }
+  "dependencies": {}
 }
