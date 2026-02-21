@@ -13,3 +13,13 @@ selenium-debug.log
 *.ntvs*
 *.njsproj
 *.sln
+
+# Fichiers TypeScript compilés (générés par tsc)
+*.js
+*.d.ts
+*.js.map
+*.d.ts.map
+!global.d.ts
+
+# Windows Zone.Identifier metadata files
+*:Zone.Identifier
