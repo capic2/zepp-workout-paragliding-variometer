@@ -1553,16 +1553,16 @@ DataWidget({
 
     this.state.vibrator.start();
     setTimeout(() => {
-      this.state.vibrator!.stop();
+      this.state.vibrator?.stop();
     }, duration);
 
     if (count > 1) {
       for (let i = 1; i < count; i++) {
         setTimeout(
           () => {
-            this.state.vibrator!.start();
+            this.state.vibrator?.start();
             setTimeout(() => {
-              this.state.vibrator!.stop();
+              this.state.vibrator?.stop();
             }, duration);
           },
           i * (duration + gap),
