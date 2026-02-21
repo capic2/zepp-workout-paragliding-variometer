@@ -1,17 +1,12 @@
+"use strict";
 App({
-  globalData: {},
-
-  onCreate(options) {},
-
-  onShow(options) {},
-
-  onHide(options) {},
-
-  onDestroy(options) {},
-
-  onError(error) {},
-
-  onPageNotFound(obj) {},
-
-  onUnhandledRejection(obj) {},
+    globalData: {},
+    onCreate(options) { },
+    onShow(options) { },
+    onHide(options) { },
+    onDestroy(options) { },
+    onError(error) { },
+    onPageNotFound(obj) { },
+    onUnhandledRejection(obj) { },
 });
+//# sourceMappingURL=app.js.map
