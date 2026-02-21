@@ -1435,6 +1435,27 @@ DataWidget({
 
   onPause(): void {
     console.log("=== LIFECYCLE: onPause ===");
+        this.state.isActive = false;
+
+            if (globalNativePlayer) {
+            try {
+                if (globalNativePlayer.getStatus() === globalNativePlayer.state.PLAY) {
+                    globalNativePlayer.stop();
+                  }
+              } catch (e) {
+                console.log(`[onPause] Audio stop error: ${e}`);
+              }
+          }
+
+            if (this.state.vibrator) {
+            this.state.vibrator.stop();
+          }
+
+    if (this.state.monitoringInterval) {
+      console.log("[onPause] Clearing monitoring");
+      clearTimeout(this.state.monitoringInterval);
+      this.state.monitoringInterval = null;
+    }
 
     if (this.state.monitoringInterval) {
       console.log("[onPause] Clearing monitoring");
